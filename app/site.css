@@ -1,0 +1,312 @@
+
+/* =========================
+   SHARED DESIGN
+========================= */
+
+.auth-page,
+.profile-page {
+  min-height: 100vh;
+  background: #f0f4fa;
+  color: #25334b;
+  font-family: Arial, Helvetica, sans-serif;
+  padding: 50px 20px;
+}
+
+/* =========================
+   PROFILE PAGE
+========================= */
+
+.profile-card {
+  max-width: 680px;
+  margin: 30px auto;
+  padding: 40px;
+  background: #ffffff;
+  border: 1px solid #e0e7f0;
+  border-radius: 20px;
+  box-shadow: 0 12px 40px rgba(30, 50, 90, 0.08);
+}
+
+.profile-card h1 {
+  font-size: 32px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: #25334b;
+}
+
+.profile-card .subtitle {
+  color: #66758a;
+  font-size: 15px;
+  margin-bottom: 24px;
+}
+
+.profile-card > p:not(.subtitle) {
+  color: #66758a;
+  font-size: 14px;
+  margin-bottom: 24px;
+}
+
+/* =========================
+   PROFILE PHOTO SECTION
+========================= */
+
+.profile-card section {
+  padding: 24px 0;
+  border-top: 1px solid #e0e7f0;
+  border-bottom: 1px solid #e0e7f0;
+  margin-bottom: 28px;
+}
+
+.profile-card section h2 {
+  font-size: 19px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: #25334b;
+}
+
+.profile-card section img {
+  width: 110px;
+  height: 110px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 3px solid #e0e7f0;
+  margin-bottom: 16px;
+}
+
+.profile-card input[type="file"] {
+  display: block;
+  max-width: 100%;
+  color: #66758a;
+  font-size: 14px;
+}
+
+.profile-card input[type="file"]::file-selector-button {
+  padding: 11px 16px;
+  margin-right: 12px;
+  background: #eef3fb;
+  color: #4766b2;
+  border: 1px solid #d1ddef;
+  border-radius: 9px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.profile-card input[type="file"]::file-selector-button:hover {
+  background: #e0e9f9;
+}
+
+/* =========================
+   PERSONAL INFORMATION
+========================= */
+
+.personal-info-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #25334b;
+  margin-bottom: 22px;
+}
+
+.profile-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.profile-card form label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #465873;
+  margin-bottom: 8px;
+}
+
+.profile-card form br {
+  display: none;
+}
+
+.profile-card input[type="text"] {
+  width: 100%;
+  padding: 13px 15px;
+  border: 1px solid #ccd7e7;
+  border-radius: 10px;
+  background: #f8fafd;
+  color: #25334b;
+  font-size: 15px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.profile-card input[type="text"]:focus {
+  border-color: #4766b2;
+  box-shadow: 0 0 0 3px rgba(71, 102, 178, 0.12);
+}
+
+/* =========================
+   SAVE CHANGES BUTTON
+========================= */
+
+.profile-card button[type="submit"] {
+  background: #4766b2;
+  color: #ffffff;
+  padding: 13px 24px;
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: background 0.2s;
+}
+
+.profile-card button[type="submit"]:hover {
+  background: #36549c;
+}
+
+.profile-card button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* =========================
+   STATUS MESSAGES
+========================= */
+
+.profile-card p[role="status"] {
+  color: #247858;
+  font-size: 14px;
+  margin-top: 12px;
+}
+
+/* =========================
+   LOGIN PAGE
+========================= */
+
+
+/* LOGIN PAGE */
+
+.account-screen {
+  min-height: 100vh;
+  background: #f0f4fa;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 24px;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.account-card {
+  width: 100%;
+  max-width: 440px;
+  background: white;
+  border: 1px solid #e0e7f0;
+  border-radius: 20px;
+  padding: 45px 40px;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(30, 50, 90, 0.08);
+}
+
+.account-icon {
+  width: 60px;
+  height: 60px;
+  background: #eaf0ff;
+  color: #4766b2;
+  border-radius: 18px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 0 auto 24px;
+}
+
+.account-card h1 {
+  color: #25334b;
+  font-size: 30px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.account-description {
+  color: #66758a;
+  font-size: 15px;
+  line-height: 1.6;
+  margin-bottom: 30px;
+}
+
+.account-google-button {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 15px 20px;
+  background: white;
+  border: 1px solid #ccd7e7;
+  border-radius: 10px;
+  color: #25334b;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.account-google-button:hover {
+  background: #f4f7fc;
+  border-color: #4766b2;
+}
+
+.account-google-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.account-google-mark {
+  font-size: 22px;
+  font-weight: 800;
+  background: conic-gradient(
+    #4285f4 0deg 90deg,
+    #34a853 90deg 180deg,
+    #fbbc05 180deg 240deg,
+    #ea4335 240deg 300deg,
+    #4285f4 300deg
+  );
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+.account-note {
+  color: #8b96a9;
+  font-size: 12px;
+  margin-top: 24px;
+}
+
+.account-error {
+  color: #bd3434;
+  font-size: 14px;
+  margin-top: 14px;
+}
+
+@media (max-width: 500px) {
+  .account-card {
+    padding: 32px 24px;
+  }
+}
+
+/* =========================
+   RESPONSIVE DESIGN
+========================= */
+
+@media (max-width: 600px) {
+  .auth-page,
+  .profile-page {
+    padding: 24px 12px;
+  }
+
+  .auth-card,
+  .profile-card {
+    margin-top: 20px;
+    padding: 26px 22px;
+  }
+
+  .profile-card h1 {
+    font-size: 27px;
+  }
+}
