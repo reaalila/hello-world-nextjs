@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState } from "react";
@@ -39,24 +38,25 @@ export default function LoginPage() {
     <main className="account-screen">
       <div className="account-card">
 
-        <div className="account-icon">
-          <svg
-            width="28"
-            height="28"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <circle cx="12" cy="8" r="4" />
-            <path d="M4.5 20c.5-4 3.3-6 7.5-6s7 2 7.5 6" />
-          </svg>
-        </div>
+        <div className="account-title-row">
+          <h1>Welcome</h1>
 
-        <h1>Welcome</h1>
+          <div className="account-icon" aria-hidden="true">
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4.5 20c.5-4 3.3-6 7.5-6s7 2 7.5 6" />
+            </svg>
+          </div>
+        </div>
 
         <p className="account-description">
           Sign in or create an account to continue.

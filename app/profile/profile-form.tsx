@@ -2,17 +2,22 @@
 
 import { useState } from "react";
 import type { FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-browser";
 
 type ProfileFormProps = {
   initialFirstName: string;
   initialLastName: string;
+  isOnboarding: boolean;
 };
 
 export default function ProfileForm({
   initialFirstName,
   initialLastName,
+  isOnboarding,
 }: ProfileFormProps) {
+  const router = useRouter();
+
   const [firstName, setFirstName] = useState(initialFirstName);
   const [lastName, setLastName] = useState(initialLastName);
   const [message, setMessage] = useState("");
@@ -20,6 +25,15 @@ export default function ProfileForm({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    const cleanFirstName = firstName.trim();
+    const cleanLastName = lastName.trim();
+
+    if (!cleanFirstName || !cleanLastName) {
+      setMessage("Please enter your first and last name.");
+      return;
+    }
+
     setSaving(true);
     setMessage("");
 
@@ -39,8 +53,8 @@ export default function ProfileForm({
       const { error } = await supabase
         .from("profiles")
         .update({
-          first_name: firstName.trim(),
-          last_name: lastName.trim(),
+          first_name: cleanFirstName,
+          last_name: cleanLastName,
         })
         .eq("id", user.id)
         .select("id")
@@ -48,8 +62,15 @@ export default function ProfileForm({
 
       if (error) {
         setMessage("Error: " + error.message);
+        return;
+      }
+
+      if (isOnboarding) {
+        router.replace("/captions");
+        router.refresh();
       } else {
         setMessage("Profile updated successfully!");
+        router.refresh();
       }
     } catch {
       setMessage("Something went wrong. Please try again.");
@@ -67,7 +88,9 @@ export default function ProfileForm({
           id="firstName"
           type="text"
           value={firstName}
-          onChange={(e) => setFirstName(e.target.value)}
+          onChange={(event) => setFirstName(event.target.value)}
+          required
+          maxLength={100}
         />
       </div>
 
@@ -78,12 +101,18 @@ export default function ProfileForm({
           id="lastName"
           type="text"
           value={lastName}
-          onChange={(e) => setLastName(e.target.value)}
+          onChange={(event) => setLastName(event.target.value)}
+          required
+          maxLength={100}
         />
       </div>
 
       <button type="submit" disabled={saving}>
-        {saving ? "Saving..." : "Save Changes"}
+        {saving
+          ? "Saving..."
+          : isOnboarding
+            ? "Save & Continue"
+            : "Save Changes"}
       </button>
 
       <p role="status">{message}</p>
