@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase-server";
-import LoginPage from "./login/page";
 
 export default async function HomePage() {
   const supabase = await createClient();
@@ -9,8 +8,9 @@ export default async function HomePage() {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // Visitors can browse the community without signing in.
   if (!user) {
-    return <LoginPage />;
+    redirect("/community");
   }
 
   const { data: profile } = await supabase

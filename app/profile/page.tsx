@@ -61,7 +61,7 @@ export default async function ProfilePage() {
               href="/captions"
               className="profile-back-link"
             >
-              ← Back to Caption Generator
+              ← Back to Create
             </Link>
           )}
         </div>

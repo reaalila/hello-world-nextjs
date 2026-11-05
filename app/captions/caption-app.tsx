@@ -2,8 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { ChangeEvent, FormEvent } from "react";
 import { createClient } from "@/lib/supabase-browser";
 
 type Caption = {
@@ -12,6 +18,7 @@ type Caption = {
   prompt: string;
   generated_caption: string;
   created_at: string;
+  image_url: string | null;
 };
 
 type Vote = {
@@ -20,6 +27,32 @@ type Vote = {
   rating: number;
 };
 
+type Style = "Funny" | "Witty" | "Aesthetic" | "Simple";
+type SortMode = "latest" | "top";
+
+type Draft = {
+  captions: string[];
+  prompt: string;
+  imagePath: string | null;
+  style: Style;
+};
+
+const STYLES: Style[] = [
+  "Funny",
+  "Witty",
+  "Aesthetic",
+  "Simple",
+];
+
+const PHOTO_BUCKET = "caption-images";
+const MAX_PHOTO_SIZE = 5 * 1024 * 1024;
+
+const ALLOWED_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+];
+
 export default function CaptionApp({
   userId,
 }: {
@@ -27,23 +60,52 @@ export default function CaptionApp({
 }) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const [prompt, setPrompt] = useState("");
+  const [style, setStyle] = useState<Style>("Funny");
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(
+    null
+  );
+
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [votes, setVotes] = useState<Vote[]>([]);
+  const [sortMode, setSortMode] = useState<SortMode>("latest");
+
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   const [votingId, setVotingId] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
+
+  useEffect(() => {
+    if (!photo) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(photo);
+    setPreviewUrl(objectUrl);
+
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [photo]);
 
   const loadCaptions = useCallback(async () => {
     try {
       const [captionResult, voteResult] = await Promise.all([
         supabase
           .from("captions")
-          .select("id, user_id, prompt, generated_caption, created_at")
+          .select(
+            "id, user_id, prompt, generated_caption, created_at, image_url"
+          )
           .order("created_at", { ascending: false }),
 
         supabase
@@ -54,8 +116,8 @@ export default function CaptionApp({
       if (captionResult.error || voteResult.error) {
         throw new Error(
           captionResult.error?.message ||
-          voteResult.error?.message ||
-          "Could not load captions."
+            voteResult.error?.message ||
+            "Could not load captions."
         );
       }
 
@@ -70,7 +132,6 @@ export default function CaptionApp({
           ? error.message
           : "Could not load captions."
       );
-
       return false;
     } finally {
       setLoading(false);
@@ -81,50 +142,293 @@ export default function CaptionApp({
     void loadCaptions();
   }, [loadCaptions]);
 
-  async function handleGenerate(event: FormEvent<HTMLFormElement>) {
+  const sortedCaptions = useMemo(() => {
+    const items = [...captions];
+
+    if (sortMode === "top") {
+      const scores = new Map<string, number>();
+
+      for (const vote of votes) {
+        scores.set(
+          vote.caption_id,
+          (scores.get(vote.caption_id) ?? 0) + vote.rating
+        );
+      }
+
+      items.sort((a, b) => {
+        const scoreDifference =
+          (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0);
+
+        if (scoreDifference !== 0) {
+          return scoreDifference;
+        }
+
+        return (
+          new Date(b.created_at).getTime() -
+          new Date(a.created_at).getTime()
+        );
+      });
+    } else {
+      items.sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() -
+          new Date(a.created_at).getTime()
+      );
+    }
+
+    return items;
+  }, [captions, votes, sortMode]);
+
+  function handlePhotoChange(
+    event: ChangeEvent<HTMLInputElement>
+  ) {
+    const selectedFile = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!selectedFile) return;
+
+    setMessage("");
+    setIsError(false);
+
+    if (!ALLOWED_TYPES.includes(selectedFile.type)) {
+      setIsError(true);
+      setMessage("Choose a JPG, PNG, or WebP photo.");
+      return;
+    }
+
+    if (selectedFile.size > MAX_PHOTO_SIZE) {
+      setIsError(true);
+      setMessage("Choose a photo smaller than 5 MB.");
+      return;
+    }
+
+    setPhoto(selectedFile);
+  }
+
+  async function handleGenerate(
+    event: FormEvent<HTMLFormElement>
+  ) {
     event.preventDefault();
 
     const cleanPrompt = prompt.trim();
 
-    if (!cleanPrompt || generating) return;
+    if (
+      generating ||
+      draft ||
+      (!cleanPrompt && !photo)
+    ) {
+      return;
+    }
 
     setGenerating(true);
     setMessage("");
     setIsError(false);
 
+    let uploadedPath: string | null = null;
+
     try {
+      if (photo) {
+        const extension =
+          photo.type === "image/png"
+            ? "png"
+            : photo.type === "image/webp"
+              ? "webp"
+              : "jpg";
+
+        uploadedPath =
+          `${userId}/${crypto.randomUUID()}.${extension}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from(PHOTO_BUCKET)
+          .upload(uploadedPath, photo, {
+            contentType: photo.type,
+            upsert: false,
+          });
+
+        if (uploadError) {
+          throw new Error(
+            `Could not upload photo: ${uploadError.message}`
+          );
+        }
+      }
+
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ prompt: cleanPrompt }),
+        body: JSON.stringify({
+          prompt: cleanPrompt,
+          imagePath: uploadedPath,
+          style,
+        }),
       });
 
       const result = await response.json();
 
       if (!response.ok) {
         throw new Error(
-          result.error || "Could not generate a caption."
+          result.error || "Could not generate captions."
         );
       }
 
-      // The existing API saves the caption to Supabase.
+      if (
+        !Array.isArray(result.captions) ||
+        result.captions.length !== 3 ||
+        !result.captions.every(
+          (item: unknown) =>
+            typeof item === "string" && item.trim().length > 0
+        )
+      ) {
+        throw new Error(
+          "The AI did not return three caption options."
+        );
+      }
+
+      setDraft({
+        captions: result.captions,
+        prompt: cleanPrompt,
+        imagePath: uploadedPath,
+        style,
+      });
+
+      setSelectedIndex(0);
+    } catch (error) {
+      if (uploadedPath) {
+        const { error: cleanupError } =
+          await supabase.storage
+            .from(PHOTO_BUCKET)
+            .remove([uploadedPath]);
+
+        if (cleanupError) {
+          console.error(
+            "Photo cleanup failed:",
+            cleanupError
+          );
+        }
+      }
+
+      setIsError(true);
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not generate captions."
+      );
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function handleCopyCaption() {
+    if (!draft) return;
+
+    try {
+      await navigator.clipboard.writeText(
+        draft.captions[selectedIndex]
+      );
+
+      setIsError(false);
+      setMessage("Caption copied to clipboard.");
+    } catch {
+      setIsError(true);
+      setMessage("Could not copy the caption.");
+    }
+  }
+
+  async function handlePublish() {
+    if (!draft || publishing) return;
+
+    setPublishing(true);
+    setMessage("");
+    setIsError(false);
+
+    try {
+      const selectedCaption = draft.captions[selectedIndex];
+
+      let imageUrl: string | null = null;
+
+      if (draft.imagePath) {
+        const { data } = supabase.storage
+          .from(PHOTO_BUCKET)
+          .getPublicUrl(draft.imagePath);
+
+        imageUrl = data.publicUrl;
+      }
+
+      const originalPrompt =
+        draft.prompt || "Caption this uploaded photo.";
+
+      const { error } = await supabase
+        .from("captions")
+        .insert({
+          user_id: userId,
+          prompt: `${originalPrompt} (Style: ${draft.style})`,
+          generated_caption: selectedCaption,
+          image_url: imageUrl,
+        });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      // Clear the draft only after Supabase confirms saving.
+      setDraft(null);
+      setSelectedIndex(0);
+      setPrompt("");
+      setPhoto(null);
+      setStyle("Funny");
+      setSortMode("latest");
+
       const loaded = await loadCaptions();
 
       if (loaded) {
-        setPrompt("");
-        setMessage("Caption generated and saved.");
+        setMessage("Caption published to the community.");
+        setIsError(false);
       }
     } catch (error) {
       setIsError(true);
       setMessage(
         error instanceof Error
           ? error.message
-          : "Something went wrong."
+          : "Could not publish your caption."
       );
     } finally {
-      setGenerating(false);
+      setPublishing(false);
+    }
+  }
+
+  async function handleStartOver() {
+    if (!draft || discarding) return;
+
+    setDiscarding(true);
+    setMessage("");
+    setIsError(false);
+
+    try {
+      if (draft.imagePath) {
+        const { error } = await supabase.storage
+          .from(PHOTO_BUCKET)
+          .remove([draft.imagePath]);
+
+        if (error) {
+          throw new Error(
+            `Could not remove unused photo: ${error.message}`
+          );
+        }
+      }
+
+      setDraft(null);
+      setSelectedIndex(0);
+      // Preserve the current description, style, and chosen photo.
+    } catch (error) {
+      setIsError(true);
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not reset the caption options."
+      );
+    } finally {
+      setDiscarding(false);
     }
   }
 
@@ -179,18 +483,18 @@ export default function CaptionApp({
       return;
     }
 
-    router.replace("/login");
+    router.replace("/community");
     router.refresh();
   }
 
   return (
-    <main className="caption-page">
+    <main className="caption-page create-page">
       <div className="caption-container">
-
         <header className="caption-header">
-          <h1>Caption Generator</h1>
+          <h1>Create</h1>
 
           <nav className="caption-navigation">
+            <Link href="#community">Community</Link>
             <Link href="/profile">My Profile</Link>
 
             <button
@@ -203,15 +507,83 @@ export default function CaptionApp({
           </nav>
         </header>
 
-        <section className="caption-section">
+        <section id="create" className="caption-section">
           <h2>What&apos;s your story?</h2>
 
           <form onSubmit={handleGenerate}>
+            <label className="caption-label">
+              Add a photo
+              <span className="caption-optional">
+                {" "}(optional)
+              </span>
+            </label>
+
+            <input
+              ref={photoInputRef}
+              className="caption-file-input"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={handlePhotoChange}
+              disabled={generating || Boolean(draft)}
+              aria-label="Choose a photo to caption"
+            />
+
+            {photo && previewUrl ? (
+              <div className="caption-photo-preview">
+                <img
+                  src={previewUrl}
+                  alt="Photo selected for caption generation"
+                />
+
+                <div className="caption-photo-actions">
+                  <span className="caption-photo-filename">
+                    {photo.name}
+                  </span>
+
+                  <div className="caption-photo-buttons">
+                    <button
+                      type="button"
+                      className="caption-photo-button"
+                      onClick={() =>
+                        photoInputRef.current?.click()
+                      }
+                      disabled={generating || Boolean(draft)}
+                    >
+                      Change Photo
+                    </button>
+
+                    <button
+                      type="button"
+                      className="caption-remove-photo"
+                      onClick={() => setPhoto(null)}
+                      disabled={generating || Boolean(draft)}
+                    >
+                      Remove Photo
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="caption-photo-button"
+                onClick={() =>
+                  photoInputRef.current?.click()
+                }
+                disabled={generating || Boolean(draft)}
+              >
+                + Choose Photo
+              </button>
+            )}
+
             <label
               htmlFor="caption-prompt"
-              className="caption-label"
+              className="caption-label caption-text-label"
             >
               Describe your moment
+              <span className="caption-optional">
+                {" "}(optional with a photo)
+              </span>
             </label>
 
             <textarea
@@ -224,9 +596,37 @@ export default function CaptionApp({
               placeholder="Tell us what happened..."
               rows={4}
               maxLength={500}
-              required
-              disabled={generating}
+              disabled={generating || Boolean(draft)}
             />
+
+            <div className="caption-style-section">
+              <span className="caption-label">
+                Caption style
+              </span>
+
+              <div
+                className="caption-style-options"
+                role="group"
+                aria-label="Caption style"
+              >
+                {STYLES.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    className={
+                      style === option
+                        ? "caption-style-button selected"
+                        : "caption-style-button"
+                    }
+                    aria-pressed={style === option}
+                    onClick={() => setStyle(option)}
+                    disabled={generating || Boolean(draft)}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             <div className="caption-form-footer">
               <span className="caption-character-count">
@@ -236,15 +636,97 @@ export default function CaptionApp({
               <button
                 type="submit"
                 className="caption-generate-button"
-                disabled={generating || !prompt.trim()}
+                disabled={
+                  generating ||
+                  Boolean(draft) ||
+                  (!prompt.trim() && !photo)
+                }
               >
                 {generating
                   ? "Generating..."
-                  : "Generate Caption"}
+                  : "Generate 3 Captions"}
               </button>
             </div>
+
+            {generating && (
+              <p className="caption-processing" role="status">
+                Generating your options. Keep this page open.
+              </p>
+            )}
           </form>
         </section>
+
+        {draft && (
+          <section className="caption-choices">
+            <div className="caption-choices-heading">
+              <h2>Choose your favorite</h2>
+              <span className="caption-choices-style">
+                {draft.style}
+              </span>
+            </div>
+
+            <div
+              className="caption-options-list"
+              role="radiogroup"
+              aria-label="Generated caption options"
+            >
+              {draft.captions.map((option, index) => (
+                <button
+                  key={index}
+                  type="button"
+                  role="radio"
+                  aria-checked={selectedIndex === index}
+                  className={
+                    selectedIndex === index
+                      ? "caption-option selected"
+                      : "caption-option"
+                  }
+                  onClick={() => setSelectedIndex(index)}
+                  disabled={publishing || discarding}
+                >
+                  <span className="caption-option-indicator">
+                    {selectedIndex === index ? "●" : "○"}
+                  </span>
+
+                  <span>{option}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="caption-choice-footer">
+              <button
+                type="button"
+                className="caption-start-over"
+                onClick={handleStartOver}
+                disabled={publishing || discarding}
+              >
+                {discarding ? "Resetting..." : "Try Again"}
+              </button>
+
+              <div className="caption-choice-actions">
+                <button
+                  type="button"
+                  className="caption-copy-button"
+                  onClick={handleCopyCaption}
+                  disabled={publishing || discarding}
+                >
+                  Copy Caption
+                </button>
+
+                <button
+                  type="button"
+                  className="caption-publish-button"
+                  onClick={handlePublish}
+                  disabled={publishing || discarding}
+                >
+                  {publishing
+                    ? "Publishing..."
+                    : "Publish Caption"}
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
 
         {message && (
           <p
@@ -259,18 +741,52 @@ export default function CaptionApp({
           </p>
         )}
 
-        <section className="caption-community">
+        <section id="community" className="caption-community">
           <div className="caption-community-heading">
             <h2>Community Captions</h2>
 
-            {!loading && (
-              <span className="caption-total">
-                {captions.length}{" "}
-                {captions.length === 1
-                  ? "caption"
-                  : "captions"}
-              </span>
-            )}
+            <div className="caption-community-controls">
+              {!loading && (
+                <span className="caption-total">
+                  {captions.length}{" "}
+                  {captions.length === 1
+                    ? "caption"
+                    : "captions"}
+                </span>
+              )}
+
+              <div
+                className="caption-sort-controls"
+                role="group"
+                aria-label="Sort community captions"
+              >
+                <button
+                  type="button"
+                  className={
+                    sortMode === "latest"
+                      ? "caption-sort-button selected"
+                      : "caption-sort-button"
+                  }
+                  aria-pressed={sortMode === "latest"}
+                  onClick={() => setSortMode("latest")}
+                >
+                  Latest
+                </button>
+
+                <button
+                  type="button"
+                  className={
+                    sortMode === "top"
+                      ? "caption-sort-button selected"
+                      : "caption-sort-button"
+                  }
+                  aria-pressed={sortMode === "top"}
+                  onClick={() => setSortMode("top")}
+                >
+                  Top Rated
+                </button>
+              </div>
+            </div>
           </div>
 
           {loading ? (
@@ -283,7 +799,7 @@ export default function CaptionApp({
             </p>
           ) : (
             <div className="caption-list">
-              {captions.map((caption) => {
+              {sortedCaptions.map((caption) => {
                 const captionVotes = votes.filter(
                   (vote) =>
                     vote.caption_id === caption.id
@@ -306,6 +822,15 @@ export default function CaptionApp({
                     key={caption.id}
                     className="caption-item"
                   >
+                    {caption.image_url && (
+                      <img
+                        src={caption.image_url}
+                        alt="Photo submitted with this caption"
+                        className="caption-card-image"
+                        loading="lazy"
+                      />
+                    )}
+
                     <p className="caption-generated-text">
                       {caption.generated_caption}
                     </p>
