@@ -203,12 +203,6 @@ export default function CommunityApp({
           >
             <Link href="/create">Create</Link>
 
-            <Link
-              href="/community"
-              aria-current="page"
-            >
-              Community
-            </Link>
 
             {userId ? (
               <>
