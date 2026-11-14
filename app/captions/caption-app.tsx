@@ -494,7 +494,7 @@ export default function CaptionApp({
           <h1>Create</h1>
 
           <nav className="caption-navigation">
-            <Link href="/captions">Create</Link>
+            <Link href="/community">Community</Link>
             <Link href="/profile">My Profile</Link>
 
             <button
