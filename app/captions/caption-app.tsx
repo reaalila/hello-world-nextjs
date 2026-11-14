@@ -494,7 +494,7 @@ export default function CaptionApp({
           <h1>Create</h1>
 
           <nav className="caption-navigation">
-            <Link href="#community">Community</Link>
+            <Link href="/community">Community</Link>
             <Link href="/profile">My Profile</Link>
 
             <button
@@ -741,7 +741,11 @@ export default function CaptionApp({
           </p>
         )}
 
-        <section id="community" className="caption-community">
+        <section
+          id="community"
+          className="caption-community"
+          style={{ display: "none" }}
+        >
           <div className="caption-community-heading">
             <h2>Community Captions</h2>
 

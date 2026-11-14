@@ -1568,3 +1568,8 @@ html {
   margin: 0;
   line-height: 1.15;
 }
+
+/* Hide Community feed on the Create page */
+.caption-page.create-page .caption-community {
+  display: none;
+}
