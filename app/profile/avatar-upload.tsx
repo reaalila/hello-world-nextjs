@@ -1,6 +1,11 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent } from "react";
+import {
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
+
 import { createClient } from "@/lib/supabase-browser";
 
 type AvatarUploadProps = {
@@ -14,6 +19,7 @@ export default function AvatarUpload({
   const [message, setMessage] = useState("");
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const busy = uploading || removing;
@@ -23,13 +29,17 @@ export default function AvatarUpload({
       const marker = "/storage/v1/object/public/avatars/";
       const pathname = new URL(url).pathname;
 
-      if (!pathname.includes(marker)) return null;
+      if (!pathname.includes(marker)) {
+        return null;
+      }
 
       const path = decodeURIComponent(
         pathname.split(marker)[1]
       );
 
-      if (!path.startsWith(`${userId}/`)) return null;
+      if (!path.startsWith(`${userId}/`)) {
+        return null;
+      }
 
       return path;
     } catch {
@@ -41,6 +51,7 @@ export default function AvatarUpload({
     event: ChangeEvent<HTMLInputElement>
   ) {
     const file = event.target.files?.[0];
+
     if (!file) return;
 
     setUploading(true);
@@ -63,11 +74,16 @@ export default function AvatarUpload({
       }
 
       if (file.size > 5 * 1024 * 1024) {
-        throw new Error("The photo must be smaller than 5 MB.");
+        throw new Error(
+          "The photo must be smaller than 5 MB."
+        );
       }
 
-      const extension = file.name.split(".").pop() || "png";
-      const filePath = `${user.id}/${crypto.randomUUID()}.${extension}`;
+      const extension =
+        file.name.split(".").pop() || "png";
+
+      const filePath =
+        `${user.id}/${crypto.randomUUID()}.${extension}`;
 
       const { error: uploadError } = await supabase.storage
         .from("avatars")
@@ -85,37 +101,52 @@ export default function AvatarUpload({
 
       const { error: updateError } = await supabase
         .from("profiles")
-        .update({ avatar_url: data.publicUrl })
+        .update({
+          avatar_url: data.publicUrl,
+        })
         .eq("id", user.id)
         .select("id")
         .single();
 
       if (updateError) {
-        await supabase.storage.from("avatars").remove([filePath]);
+        await supabase.storage
+          .from("avatars")
+          .remove([filePath]);
+
         throw updateError;
       }
 
       const previousUrl = avatarUrl;
-      setAvatarUrl(data.publicUrl);
-      setMessage("Photo uploaded successfully!");
 
-      // Clean up the previous photo when replacing it.
+      setAvatarUrl(data.publicUrl);
+      setMessage("Photo updated successfully.");
+
+      // Clean up the previous photo.
       if (previousUrl) {
-        const oldPath = getPhotoPath(previousUrl, user.id);
+        const oldPath = getPhotoPath(
+          previousUrl,
+          user.id
+        );
 
         if (oldPath && oldPath !== filePath) {
-          const { error: cleanupError } = await supabase.storage
-            .from("avatars")
-            .remove([oldPath]);
+          const { error: cleanupError } =
+            await supabase.storage
+              .from("avatars")
+              .remove([oldPath]);
 
           if (cleanupError) {
-            console.error("Old photo cleanup failed:", cleanupError);
+            console.error(
+              "Old photo cleanup failed:",
+              cleanupError
+            );
           }
         }
       }
     } catch (error) {
       setMessage(
-        error instanceof Error ? error.message : "Upload failed."
+        error instanceof Error
+          ? error.message
+          : "Upload failed."
       );
     } finally {
       setUploading(false);
@@ -144,25 +175,31 @@ export default function AvatarUpload({
         throw new Error("Please sign in first.");
       }
 
-      const photoPath = getPhotoPath(avatarUrl, user.id);
+      const photoPath = getPhotoPath(
+        avatarUrl,
+        user.id
+      );
 
       if (!photoPath) {
-        throw new Error("Could not locate your photo.");
+        throw new Error(
+          "Could not locate your photo."
+        );
       }
 
-      // Delete the image from Supabase Storage.
-      const { error: deleteError } = await supabase.storage
-        .from("avatars")
-        .remove([photoPath]);
+      const { error: deleteError } =
+        await supabase.storage
+          .from("avatars")
+          .remove([photoPath]);
 
       if (deleteError) {
         throw deleteError;
       }
 
-      // Remove the saved photo URL from the profile.
       const { error: updateError } = await supabase
         .from("profiles")
-        .update({ avatar_url: null })
+        .update({
+          avatar_url: null,
+        })
         .eq("id", user.id)
         .select("id")
         .single();
@@ -172,7 +209,7 @@ export default function AvatarUpload({
       }
 
       setAvatarUrl(null);
-      setMessage("Photo removed successfully!");
+      setMessage("Photo removed successfully.");
     } catch (error) {
       setMessage(
         error instanceof Error
@@ -185,58 +222,76 @@ export default function AvatarUpload({
   }
 
   return (
-    <section className="profile-photo-section">
-      <h2>Profile Photo</h2>
-
+    <section
+      className="profile-photo-section"
+      aria-label="Profile photo"
+    >
       <div className="profile-photo-row">
-        {avatarUrl && (
+        {avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={avatarUrl}
             alt="Your profile photo"
-            width={76}
-            height={76}
+            width={96}
+            height={96}
           />
+        ) : (
+          <div
+            className="profile-photo-placeholder"
+            aria-hidden="true"
+          >
+            ✳
+          </div>
         )}
 
         <div className="profile-photo-actions">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleUpload}
-            disabled={busy}
-            className="profile-photo-input"
-            aria-label="Upload profile photo"
-          />
+          <h2>Profile photo</h2>
 
-          <button
-            type="button"
-            className="profile-photo-button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={busy}
-          >
-            {uploading
-              ? "Uploading..."
-              : avatarUrl
-              ? "Change Photo"
-              : "Choose Photo"}
-          </button>
+          <div className="profile-photo-controls">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleUpload}
+              disabled={busy}
+              className="profile-photo-input"
+              aria-label="Upload profile photo"
+            />
 
-          {avatarUrl && (
             <button
               type="button"
-              className="profile-photo-button profile-photo-remove"
-              onClick={handleRemove}
+              className="profile-photo-button"
+              onClick={() =>
+                fileInputRef.current?.click()
+              }
               disabled={busy}
             >
-              {removing ? "Removing..." : "Remove Photo"}
+              {uploading
+                ? "Uploading..."
+                : avatarUrl
+                  ? "Change photo"
+                  : "Upload photo"}
             </button>
-          )}
+
+            {avatarUrl && (
+              <button
+                type="button"
+                className="profile-photo-button profile-photo-remove"
+                onClick={handleRemove}
+                disabled={busy}
+              >
+                {removing ? "Removing..." : "Remove"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       {message && (
-        <p className="profile-photo-message" role="status">
+        <p
+          className="profile-photo-message"
+          role="status"
+        >
           {message}
         </p>
       )}

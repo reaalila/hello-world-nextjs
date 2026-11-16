@@ -66,7 +66,7 @@ export default function ProfileForm({
       }
 
       if (isOnboarding) {
-        router.replace("/captions");
+        router.replace("/community");
         router.refresh();
       } else {
         setMessage("Profile updated successfully!");

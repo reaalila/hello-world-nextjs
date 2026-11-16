@@ -1,8 +1,22 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { Bricolage_Grotesque, DM_Sans } from "next/font/google";
+import { createClient } from "@/lib/supabase-server";
 import AvatarUpload from "./avatar-upload";
 import ProfileForm from "./profile-form";
-import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase-server";
+import styles from "./profile.module.css";
+
+const headingFont = Bricolage_Grotesque({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-sidequest-heading",
+});
+
+const bodyFont = DM_Sans({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-sidequest-body",
+});
 
 export default async function ProfilePage() {
   const supabase = await createClient();
@@ -27,64 +41,104 @@ export default async function ProfilePage() {
     !profile?.last_name?.trim();
 
   return (
-    <main className="profile-page">
-      <div className="profile-card">
-        <div className="profile-topbar">
-          <div className="profile-heading">
-            <h1>
-              {isOnboarding
-                ? "Complete Your Profile"
-                : "My Profile"}
-            </h1>
-
-            <div className="profile-account-email">
-              <svg
-                width="17"
-                height="17"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+    <main
+      className={`${headingFont.variable} ${bodyFont.variable} ${styles.page}`}
+    >
+      <div className={styles.shell}>
+        {/* NAVIGATION */}
+        <header className={styles.siteHeader}>
+          <nav
+            className={styles.nav}
+            aria-label="Main navigation"
+          >
+            <Link
+              href="/community"
+              className={styles.logo}
+            >
+              <span
+                className={styles.logoStar}
                 aria-hidden="true"
               >
-                <rect x="3" y="5" width="18" height="14" rx="2" />
-                <path d="m3 7 9 6 9-6" />
-              </svg>
-              <span>{user.email}</span>
+                ✳
+              </span>
+              NYC Sidequest
+            </Link>
+
+            <div className={styles.navLinks}>
+              <Link
+                href="/community"
+                className={styles.navLink}
+              >
+                EXPLORE
+              </Link>
+
+              <Link
+                href="/sidequest"
+                className={styles.navLink}
+              >
+                CREATE
+              </Link>
+
+              <span
+                className={styles.activeNavLink}
+                aria-current="page"
+              >
+                MY PROFILE
+              </span>
             </div>
+          </nav>
+        </header>
+
+        {/* PROFILE CARD */}
+        <section
+          className={styles.profileCard}
+          aria-labelledby="profile-heading"
+        >
+          {/* HEADING AND EMAIL */}
+          <div className={styles.cardHeader}>
+            <h1
+              id="profile-heading"
+              className={styles.pageTitle}
+            >
+              {isOnboarding
+                ? "Complete your profile"
+                : "My profile"}
+            </h1>
+
+            <p className={styles.accountEmail}>
+              <span>Signed in as</span>
+              <strong>{user.email}</strong>
+            </p>
+
+            {isOnboarding && (
+              <p className={styles.onboardingHelp}>
+                Add your first and last name to continue.
+              </p>
+            )}
           </div>
 
-          {!isOnboarding && (
-            <Link
-              href="/captions"
-              className="profile-back-link"
-            >
-              ← Back to Create
-            </Link>
-          )}
-        </div>
+          {/* PROFILE PHOTO */}
+          <div className={styles.photoArea}>
+            <AvatarUpload
+              initialAvatarUrl={
+                profile?.avatar_url ?? null
+              }
+            />
+          </div>
 
-        {isOnboarding && (
-          <p className="profile-onboarding-note">
-            Add your information to get started.
-          </p>
-        )}
-
-        <AvatarUpload
-          initialAvatarUrl={profile?.avatar_url ?? null}
-        />
-
-        <h2 className="personal-info-title">
-          Personal Information
-        </h2>
-
-        <ProfileForm
-          initialFirstName={profile?.first_name ?? ""}
-          initialLastName={profile?.last_name ?? ""}
-          isOnboarding={isOnboarding}
-        />
+          {/* PERSONAL INFORMATION */}
+          <div className={styles.formRegion}>
+            <ProfileForm
+              initialFirstName={
+                profile?.first_name ?? ""
+              }
+              initialLastName={
+                profile?.last_name ?? ""
+              }
+              isOnboarding={isOnboarding}
+            />
+          </div>
+        </section>
       </div>
     </main>
   );

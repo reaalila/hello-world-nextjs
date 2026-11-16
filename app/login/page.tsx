@@ -1,7 +1,21 @@
 "use client";
 
 import { useState } from "react";
+import { Bricolage_Grotesque, DM_Sans } from "next/font/google";
 import { createClient } from "@/lib/supabase-browser";
+import styles from "./login.module.css";
+
+const headingFont = Bricolage_Grotesque({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-sidequest-heading",
+});
+
+const bodyFont = DM_Sans({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-sidequest-body",
+});
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
@@ -30,55 +44,87 @@ export default function LoginPage() {
           ? error.message
           : "Something went wrong. Please try again."
       );
+
       setLoading(false);
     }
   }
 
   return (
-    <main className="account-screen">
-      <div className="account-card">
-
-        <div className="account-title-row">
-          <h1>Welcome</h1>
-
-          <div className="account-icon" aria-hidden="true">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="8" r="4" />
-              <path d="M4.5 20c.5-4 3.3-6 7.5-6s7 2 7.5 6" />
-            </svg>
-          </div>
+    <main
+      className={`${headingFont.variable} ${bodyFont.variable} ${styles.page}`}
+    >
+      <section
+        className={styles.loginCard}
+        aria-labelledby="login-heading"
+      >
+        {/* BRAND */}
+        <div className={styles.brand}>
+          <span
+            className={styles.brandSymbol}
+            aria-hidden="true"
+          >
+            ✳
+          </span>
+          <span>NYC Sidequest</span>
         </div>
 
-        <p className="account-description">
-          Sign in or create an account to continue.
-        </p>
+        {/* INTRODUCTION */}
+        <div className={styles.introduction}>
+          <p className={styles.eyebrow}>
+            SIGN IN TO START EXPLORING
+          </p>
 
+          <h1
+            id="login-heading"
+            className={styles.title}
+          >
+            Welcome!
+          </h1>
+
+          <p className={styles.description}>
+            Sign in to create and share your own NYC
+            adventures.
+          </p>
+        </div>
+
+        {/* GOOGLE SIGN-IN */}
         <button
-          className="account-google-button"
+          type="button"
+          className={styles.googleButton}
           onClick={signInWithGoogle}
           disabled={loading}
         >
-          <span className="account-google-mark">G</span>
-          {loading
-            ? "Connecting to Google..."
-            : "Continue with Google"}
+          <span
+            className={styles.googleMark}
+            aria-hidden="true"
+          >
+            G
+          </span>
+
+          <span className={styles.googleText}>
+            {loading
+              ? "Connecting to Google..."
+              : "Continue with Google"}
+          </span>
+
+          <span
+            className={styles.buttonArrow}
+            aria-hidden="true"
+          >
+            ↗
+          </span>
         </button>
 
+        {/* ERROR MESSAGE */}
         {errorMessage && (
-          <p className="account-error" role="alert">
+          <p
+            className={styles.errorMessage}
+            role="alert"
+          >
             {errorMessage}
           </p>
         )}
-      </div>
+      </section>
     </main>
   );
 }

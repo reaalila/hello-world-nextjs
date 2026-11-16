@@ -1,0 +1,87 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.voteButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 17px;
+  border: 1.5px solid #101010;
+  border-radius: 100px;
+  background: #fcedc7;
+  color: #101010;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.voteButton:hover:not(:disabled) {
+  background: #ffe0bd;
+}
+
+.voteButton:focus-visible,
+.signInLink:focus-visible {
+  outline: 3px solid #b36d4b;
+  outline-offset: 3px;
+}
+
+.voteButton:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.upActive,
+.upActive:hover:not(:disabled) {
+  background: #99a762;
+}
+
+.downActive,
+.downActive:hover:not(:disabled) {
+  background: #ffc0a9;
+}
+
+.status,
+.success,
+.error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.status {
+  color: #57513f;
+}
+
+.success {
+  color: #40572f;
+  font-weight: 700;
+}
+
+.error {
+  color: #9c3027;
+}
+
+.signInLink {
+  display: inline-flex;
+  padding: 10px 18px;
+  border: 1.5px solid #101010;
+  border-radius: 100px;
+  background: #101010;
+  color: #fcedc7;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}

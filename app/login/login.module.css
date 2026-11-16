@@ -1,0 +1,223 @@
+/* PAGE */
+.page {
+  --pink: #f1babb;
+  --butter: #fcedc7;
+  --ink: #101010;
+  --accent: #d77b53;
+  --muted: #625c50;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 24px;
+  background: var(--pink);
+  color: var(--ink);
+  font-family: var(--font-sidequest-body), Arial, sans-serif;
+}
+
+.page * {
+  box-sizing: border-box;
+}
+
+/* LOGIN CARD */
+
+.loginCard {
+  width: 100%;
+  max-width: 560px;
+  padding: 38px 42px 42px;
+  border: 2px solid var(--ink);
+  border-radius: 28px;
+  background: var(--butter);
+}
+
+/* BRAND */
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 28px;
+  color: var(--ink);
+  font-family: var(--font-sidequest-heading), sans-serif;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.brandSymbol {
+  color: var(--accent);
+  font-size: 26px;
+  line-height: 1;
+}
+
+/* WELCOME TEXT */
+
+.introduction {
+  margin-bottom: 28px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-family: var(--font-sidequest-body), sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-sidequest-heading), sans-serif;
+  font-size: clamp(36px, 4vw, 44px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+}
+
+.description {
+  max-width: 420px;
+  margin: 16px 0 0;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+/* GOOGLE BUTTON */
+
+.googleButton {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 58px;
+  padding: 10px 18px;
+  border: 2px solid var(--ink);
+  border-radius: 100px;
+  background: var(--ink);
+  color: var(--butter);
+  font-family: var(--font-sidequest-body), sans-serif;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    opacity 160ms ease;
+}
+
+.googleButton:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+
+.googleButton:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.googleButton:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+/* GOOGLE MARK */
+
+.googleMark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--butter);
+  color: var(--ink);
+  font-family: var(--font-sidequest-body), sans-serif;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+/* BUTTON TEXT */
+
+.googleText {
+  color: var(--butter);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-align: left;
+}
+
+.buttonArrow {
+  color: var(--butter);
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* ERROR MESSAGE */
+
+.errorMessage {
+  margin: 16px 0 0;
+  color: #9c3027;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* MOBILE */
+
+@media (max-width: 640px) {
+  .page {
+    padding: 20px;
+  }
+
+  .loginCard {
+    padding: 32px 24px;
+    border-radius: 22px;
+  }
+
+  .brand {
+    margin-bottom: 24px;
+    font-size: 17px;
+  }
+
+  .brandSymbol {
+    font-size: 24px;
+  }
+
+  .eyebrow {
+    font-size: 10px;
+  }
+
+  .title {
+    font-size: 34px;
+  }
+
+  .description {
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .introduction {
+    margin-bottom: 24px;
+  }
+
+  .googleButton {
+    min-height: 54px;
+    padding: 10px 14px;
+    gap: 12px;
+  }
+
+  .googleMark {
+    width: 30px;
+    height: 30px;
+    font-size: 18px;
+  }
+
+  .googleText {
+    font-size: 12px;
+  }
+
+  .buttonArrow {
+    font-size: 18px;
+  }
+}
