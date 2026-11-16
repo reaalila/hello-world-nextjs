@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@/lib/supabase-server";
 
-// Use one model for faster generation.
+// Keep the existing Gemini model.
 const MODEL_NAME = "gemini-3.5-flash-lite";
+
+// Allow one additional attempt when validation fails.
+const MAX_GENERATION_ATTEMPTS = 2;
 
 type ItineraryStop = {
   place: string;
@@ -18,6 +21,13 @@ type GeneratedItinerary = {
   title: string;
   tagline: string;
   stops: ItineraryStop[];
+};
+
+type ValidatedItinerary = {
+  generated: GeneratedItinerary;
+  stops: ItineraryStop[];
+  totalMinutes: number;
+  totalCost: number;
 };
 
 // Format minutes into readable durations.
@@ -38,20 +48,20 @@ function wordCount(text: string): number {
 
 // Extract the student's available time.
 function getTimeLimit(text: string): number | null {
+  const words: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+  };
+
   const hoursMatch = text.match(
-    /\b(\d+(?:\.\d+)?|one|two|three|four|five|six)\s*(?:hours?|hrs?|hr)\b/i
+    /\b(\d+(?:\.\d+)?|one|two|three|four|five|six)[\s-]*(?:hours?|hrs?|hr)\b/i
   );
 
   if (hoursMatch) {
-    const words: Record<string, number> = {
-      one: 1,
-      two: 2,
-      three: 3,
-      four: 4,
-      five: 5,
-      six: 6,
-    };
-
     const value = hoursMatch[1].toLowerCase();
     const hours = words[value] ?? Number(value);
 
@@ -59,7 +69,7 @@ function getTimeLimit(text: string): number | null {
   }
 
   const minutesMatch = text.match(
-    /\b(\d+)\s*(?:minutes?|mins?)\b/i
+    /\b(\d+)[\s-]*(?:minutes?|mins?)\b/i
   );
 
   return minutesMatch
@@ -74,6 +84,18 @@ function getBudget(text: string): number | null {
   );
 
   return match ? Number(match[1]) : null;
+}
+
+// Normalize destination names for duplicate detection.
+function normalizePlaceName(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, "and")
+    .replace(/[.,]/g, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+    .trim();
 }
 
 // Validate Gemini's structured response.
@@ -112,6 +134,115 @@ function isValidItinerary(
       stop.walkMinutesToNext >= 0 &&
       stop.walkMinutesToNext <= 30
   );
+}
+
+// Reject vague destination names.
+const GENERIC_NAMES = new Set([
+  "columbia university campus",
+  "university campus",
+  "manhattan",
+  "new york city",
+  "morningside heights",
+  "upper west side",
+  "neighborhood cafe",
+  "local cafe",
+  "nearby coffee shop",
+]);
+
+// Validate the full itinerary, including constraints.
+// Return null when another generation attempt is needed.
+function validateGeneratedItinerary(
+  value: unknown,
+  maxMinutes: number,
+  budgetLimit: number | null
+): ValidatedItinerary | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<GeneratedItinerary>;
+
+  // STEP A: Validate structure and writing requirements.
+  if (!isValidItinerary(candidate)) {
+    console.warn(
+      "Generated itinerary failed structural validation."
+    );
+
+    return null;
+  }
+
+  // STEP B: Ensure the last stop has no outgoing walk.
+  const stops = candidate.stops.map((stop, index) => ({
+    ...stop,
+    walkMinutesToNext:
+      index === candidate.stops.length - 1
+        ? 0
+        : stop.walkMinutesToNext,
+  }));
+
+  // STEP C: Reject duplicate or vague places.
+  const placeNames = stops.map((stop) =>
+    normalizePlaceName(stop.place)
+  );
+
+  const hasDuplicates =
+    new Set(placeNames).size !== placeNames.length;
+
+  const hasGenericPlace = placeNames.some((name) =>
+    GENERIC_NAMES.has(name)
+  );
+
+  if (hasDuplicates || hasGenericPlace) {
+    console.warn(
+      "Generated itinerary contains duplicate or generic places."
+    );
+
+    return null;
+  }
+
+  // STEP D: Calculate total duration.
+  const totalMinutes = stops.reduce(
+    (sum, stop) =>
+      sum +
+      stop.durationMinutes +
+      stop.walkMinutesToNext,
+    0
+  );
+
+  // STEP E: Calculate total estimated spending.
+  const totalCost = stops.reduce(
+    (sum, stop) =>
+      sum + stop.estimatedCostUsd,
+    0
+  );
+
+  // STEP F: Enforce the user's time constraint.
+  if (totalMinutes > maxMinutes) {
+    console.warn(
+      `Itinerary exceeds time limit: ${totalMinutes}/${maxMinutes} minutes.`
+    );
+
+    return null;
+  }
+
+  // STEP G: Enforce the user's budget constraint.
+  if (
+    budgetLimit !== null &&
+    totalCost > budgetLimit
+  ) {
+    console.warn(
+      `Itinerary exceeds budget: $${totalCost}/$${budgetLimit}.`
+    );
+
+    return null;
+  }
+
+  return {
+    generated: candidate,
+    stops,
+    totalMinutes,
+    totalCost,
+  };
 }
 
 export async function POST(request: Request) {
@@ -181,6 +312,18 @@ export async function POST(request: Request) {
     const timeLimit = getTimeLimit(userRequest);
     const budgetLimit = getBudget(userRequest);
     const maxMinutes = timeLimit ?? 240;
+
+    // A two-stop itinerary needs at least 30 minutes
+    // because each activity must last 15 minutes.
+    if (maxMinutes < 30) {
+      return NextResponse.json(
+        {
+          error:
+            "Please allow at least 30 minutes for your SideQuest.",
+        },
+        { status: 400 }
+      );
+    }
 
     // STEP 4: Define the generation prompt.
     const prompt = `
@@ -457,36 +600,63 @@ the supplied response schema.
       ],
     };
 
-    // STEP 6: Generate the itinerary.
-    console.log(`Generating SideQuest with ${MODEL_NAME}`);
+    // STEP 6: Generate, validate, and retry if needed.
+    let validated: ValidatedItinerary | null = null;
 
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseJsonSchema: schema,
-      },
-    });
+    for (
+      let attempt = 1;
+      attempt <= MAX_GENERATION_ATTEMPTS;
+      attempt++
+    ) {
+      console.log(
+        `Generating SideQuest with ${MODEL_NAME} (${attempt}/${MAX_GENERATION_ATTEMPTS})`
+      );
 
-    let generated: Partial<GeneratedItinerary>;
-
-    try {
-      generated = JSON.parse(
-        response.text ?? "{}"
-      ) as Partial<GeneratedItinerary>;
-    } catch {
-      return NextResponse.json(
-        {
-          error:
-            "Gemini returned an invalid response. Please try again.",
+      // Preserve API errors for the outer error handler.
+      // This avoids hiding service failures as validation errors.
+      const response = await ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseJsonSchema: schema,
         },
-        { status: 422 }
+      });
+
+      // STEP 7: Parse the structured JSON.
+      let parsed: unknown;
+
+      try {
+        parsed = JSON.parse(
+          response.text ?? "{}"
+        );
+      } catch {
+        console.warn(
+          `Attempt ${attempt}: Gemini returned invalid JSON.`
+        );
+
+        continue;
+      }
+
+      // STEP 8: Validate structure, places, time, and budget.
+      const result = validateGeneratedItinerary(
+        parsed,
+        maxMinutes,
+        budgetLimit
+      );
+
+      if (result) {
+        validated = result;
+        break;
+      }
+
+      console.warn(
+        `Attempt ${attempt}: itinerary failed validation.`
       );
     }
 
-    // STEP 7: Validate the result.
-    if (!isValidItinerary(generated)) {
+    // Both attempts failed validation.
+    if (!validated) {
       return NextResponse.json(
         {
           error:
@@ -496,86 +666,12 @@ the supplied response schema.
       );
     }
 
-    // Ensure the final stop has no subsequent walking time.
-    const stops = generated.stops.map(
-      (stop, index) => ({
-        ...stop,
-        walkMinutesToNext:
-          index === generated.stops.length - 1
-            ? 0
-            : stop.walkMinutesToNext,
-      })
-    );
-
-    // Reject duplicate or overly generic destinations.
-    const placeNames = stops.map((stop) =>
-      stop.place.toLowerCase().trim()
-    );
-
-    const genericNames = new Set([
-      "columbia university campus",
-      "university campus",
-      "manhattan",
-      "new york city",
-      "morningside heights",
-      "upper west side",
-      "neighborhood café",
-      "neighborhood cafe",
-      "local café",
-      "local cafe",
-      "nearby coffee shop",
-    ]);
-
-    if (
-      new Set(placeNames).size !== placeNames.length ||
-      placeNames.some((name) => genericNames.has(name))
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Could not create a specific enough itinerary. Please try again.",
-        },
-        { status: 422 }
-      );
-    }
-
-    // STEP 8: Calculate estimated totals.
-    const totalMinutes = stops.reduce(
-      (sum, stop) =>
-        sum +
-        stop.durationMinutes +
-        stop.walkMinutesToNext,
-      0
-    );
-
-    const totalCost = stops.reduce(
-      (sum, stop) =>
-        sum + stop.estimatedCostUsd,
-      0
-    );
-
-    if (totalMinutes > maxMinutes) {
-      return NextResponse.json(
-        {
-          error:
-            "The generated itinerary exceeded your time limit. Please try again.",
-        },
-        { status: 422 }
-      );
-    }
-
-    if (
-      budgetLimit !== null &&
-      totalCost > budgetLimit
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "The generated itinerary exceeded your budget. Please try again.",
-        },
-        { status: 422 }
-      );
-    }
+    const {
+      generated,
+      stops,
+      totalMinutes,
+      totalCost,
+    } = validated;
 
     // STEP 9: Format a concise, readable guide.
     const stopSections = stops.map((stop, index) => {
@@ -600,52 +696,30 @@ ${stop.activity}`;
       ...stopSections,
     ].join("\n\n");
 
-    // STEP 10: Prepare locations for real-photo lookup.
+    // STEP 10: Prepare locations for photo lookup.
+    // Prioritize specific stops before neighborhood fallbacks.
     const photoPlace = stops[0].place;
 
-    // Determine the borough from the user's request.
-    // This helps identify photographs of neighborhoods.
-    const borough =
-      /\bbrooklyn\b/i.test(userRequest)
-        ? "Brooklyn"
-        : /\bqueens\b/i.test(userRequest)
-          ? "Queens"
-          : /\bbronx\b/i.test(userRequest)
-            ? "Bronx"
-            : /\bstaten island\b/i.test(userRequest)
-              ? "Staten Island"
-              : /\bmanhattan\b/i.test(userRequest)
-                ? "Manhattan"
-                : "";
-
-    // Try photos of specific places first.
-    // If none exist, try photographs of the neighborhoods.
     const photoPlaces = [
-      ...stops.map((stop) => stop.place),
-
-      ...stops.map((stop) => {
-        const neighborhood = stop.neighborhood.trim();
-
-        if (
-          borough &&
-          !neighborhood
-            .toLowerCase()
-            .includes(borough.toLowerCase())
-        ) {
-          return `${neighborhood}, ${borough}`;
-        }
-
-        return neighborhood;
-      }),
-
-      // Include the original neighborhood names as fallbacks.
-      ...stops.map((stop) => stop.neighborhood.trim()),
+      ...stops.map((stop) =>
+        stop.place.trim()
+      ),
+      ...stops.map((stop) =>
+        stop.neighborhood.trim()
+      ),
     ];
 
-    // Remove duplicate search terms.
-    const uniquePhotoPlaces = [
-      ...new Set(photoPlaces.filter(Boolean)),
-    ];
+    // Remove duplicate and empty search terms.
+    const uniquePhotoPlaces = Array.from(
+      new Map(
+        photoPlaces
+          .filter(Boolean)
+          .map((place) => [
+            normalizePlaceName(place),
+            place,
+          ])
+      ).values()
+    );
 
     // STEP 11: Save the AI-generated SideQuest.
     const {
@@ -677,7 +751,7 @@ ${stop.activity}`;
       );
     }
 
-    // STEP 12: Save the exact AI prompt.
+    // STEP 12: Save the exact AI prompt and model.
     const {
       error: promptError,
     } = await supabase
@@ -695,7 +769,7 @@ ${stop.activity}`;
         promptError
       );
 
-      // Remove the generation if its prompt was not saved.
+      // Remove the SideQuest if its prompt was not saved.
       const {
         error: cleanupError,
       } = await supabase
@@ -728,10 +802,10 @@ ${stop.activity}`;
         // First recommended location.
         photoPlace,
 
-        // Specific places followed by neighborhood fallbacks.
+        // Places followed by neighborhood fallbacks.
         photoPlaces: uniquePhotoPlaces,
 
-        // Retained for compatibility with the frontend.
+        // Retained for frontend compatibility.
         eventIds: [],
       },
     });

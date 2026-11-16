@@ -665,10 +665,7 @@
   }
 }
 
-
-
 /* RESPONSIVE PAGE HEIGHT */
-
 .page {
   min-height: 100vh;
   min-height: 100dvh;
@@ -685,6 +682,15 @@
   min-height: 0;
 }
 
+/* Keep the footer at the bottom while
+   maintaining spacing below the content. */
+
 .footer {
   margin-top: auto;
+}
+
+/* Add breathing room after a generated SideQuest. */
+
+.resultSection {
+  margin-bottom: 48px;
 }
