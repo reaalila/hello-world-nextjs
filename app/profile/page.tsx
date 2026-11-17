@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Bricolage_Grotesque, DM_Sans } from "next/font/google";
 import { createClient } from "@/lib/supabase-server";
+import AccountMenu from "@/app/components/account-menu";
 import AvatarUpload from "./avatar-upload";
 import ProfileForm from "./profile-form";
 import styles from "./profile.module.css";
@@ -21,6 +22,7 @@ const bodyFont = DM_Sans({
 export default async function ProfilePage() {
   const supabase = await createClient();
 
+  // Check that the user is signed in.
   const {
     data: { user },
     error,
@@ -30,12 +32,14 @@ export default async function ProfilePage() {
     redirect("/login");
   }
 
+  // Load the user's existing profile.
   const { data: profile } = await supabase
     .from("profiles")
     .select("first_name, last_name, avatar_url")
     .eq("id", user.id)
     .single();
 
+  // Determine whether the profile is complete.
   const isOnboarding =
     !profile?.first_name?.trim() ||
     !profile?.last_name?.trim();
@@ -79,12 +83,8 @@ export default async function ProfilePage() {
                 CREATE
               </Link>
 
-              <span
-                className={styles.activeNavLink}
-                aria-current="page"
-              >
-                MY PROFILE
-              </span>
+              {/* Shared profile icon dropdown */}
+              <AccountMenu isLoggedIn={true} />
             </div>
           </nav>
         </header>

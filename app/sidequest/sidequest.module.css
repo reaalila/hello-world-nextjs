@@ -143,6 +143,7 @@
   border: 3px solid var(--ink);
   border-radius: 28px;
   background: var(--olive);
+  margin-top: 15px;
 }
 
 .formHeading {
@@ -525,7 +526,7 @@
   display: flex;
   justify-content: space-between;
   gap: 20px;
-  margin-top: 48px;
+  margin-top: 20px;
   padding: 16px 0 24px;
   border-top: 2px solid var(--ink);
   font-size: 11px;
@@ -694,3 +695,4 @@
 .resultSection {
   margin-bottom: 48px;
 }
+

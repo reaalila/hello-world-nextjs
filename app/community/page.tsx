@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { Bricolage_Grotesque, DM_Sans } from "next/font/google";
 import { createClient } from "@/lib/supabase-server";
+import AccountMenu from "@/app/components/account-menu";
 import VoteButtons from "./vote-buttons";
+import SearchBar from "./search-bar";
 import styles from "./community.module.css";
 
 export const dynamic = "force-dynamic";
@@ -35,8 +37,42 @@ type SideQuest = {
   photo: PlacePhoto | null;
 };
 
-// Extract a short preview without changing stored AI content.
-function getGuidePreview(guide: string, title: string) {
+type ItineraryStop = {
+  number: number;
+  place: string;
+  details: string;
+  activity: string;
+};
+
+type ParsedItinerary = {
+  stops: ItineraryStop[];
+};
+
+type VoteCounts = {
+  upvotes: number;
+  downvotes: number;
+};
+
+type VoteCountRow = {
+  sidequest_id: string;
+  upvotes: number;
+  downvotes: number;
+};
+
+type SortOption = "recent" | "top";
+
+type CommunityPageProps = {
+  searchParams: Promise<{
+    sort?: string | string[];
+    q?: string | string[];
+  }>;
+};
+
+// Extract the tagline and time/budget estimate.
+function getGuidePreview(
+  guide: string,
+  title: string
+) {
   const lines = guide
     .split("\n")
     .map((line) => line.trim())
@@ -55,33 +91,144 @@ function getGuidePreview(guide: string, title: string) {
         line.toLowerCase() !== title.toLowerCase() &&
         !/^\d+\s*[.)]/.test(line) &&
         !/^[-•]/.test(line)
-    ) ?? "Discover a new adventure around New York City.";
+    ) ??
+    "Discover a new adventure around New York City.";
 
   return { description, estimate };
 }
 
-export default async function CommunityPage() {
+// Convert a saved guide into numbered stops.
+function parseItinerary(
+  guide: string
+): ParsedItinerary | null {
+  const sections = guide
+    .trim()
+    .split(/\n\s*\n/)
+    .map((section) => section.trim())
+    .filter(Boolean);
+
+  if (sections.length < 3) {
+    return null;
+  }
+
+  const stopSections = sections.slice(2);
+  const stops: ItineraryStop[] = [];
+
+  for (const section of stopSections) {
+    const lines = section
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (lines.length < 3) {
+      return null;
+    }
+
+    const headingMatch = lines[0].match(
+      /^(\d+)[.)]\s+(.+)$/
+    );
+
+    if (!headingMatch) {
+      return null;
+    }
+
+    const number = Number(headingMatch[1]);
+    const place = headingMatch[2].trim();
+    const details = lines[1];
+    const activity = lines.slice(2).join(" ");
+
+    if (
+      !Number.isInteger(number) ||
+      !place ||
+      !details ||
+      !activity
+    ) {
+      return null;
+    }
+
+    stops.push({
+      number,
+      place,
+      details,
+      activity,
+    });
+  }
+
+  return stops.length > 0 ? { stops } : null;
+}
+
+export default async function CommunityPage({
+  searchParams,
+}: CommunityPageProps) {
   const supabase = await createClient();
 
+  // Read sorting and keyword search parameters.
+  const params = await searchParams;
+
+  const sort: SortOption =
+    params.sort === "top" ? "top" : "recent";
+
+  const query =
+    typeof params.q === "string"
+      ? params.q.trim().slice(0, 80)
+      : "";
+
+  // Public browsing; authentication is optional.
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Publicly published SideQuests.
+  // STEP 1: Load published Sidequests.
   const { data, error } = await supabase
     .from("sidequests")
-    .select("id, title, generated_guide, created_at, photo")
+    .select(
+      "id, title, generated_guide, created_at, photo"
+    )
     .eq("is_published", true)
     .order("created_at", { ascending: false })
-    .limit(30);
+    .limit(200);
 
   const sidequests = (data ?? []) as SideQuest[];
 
-  // Retrieve only the signed-in user's votes.
+  // STEP 2: Load aggregate vote counts.
+  const voteCounts: Record<string, VoteCounts> = {};
+
+  let countsAvailable = false;
+
+  if (!error && sidequests.length > 0) {
+    const {
+      data: countRows,
+      error: countsError,
+    } = await supabase.rpc(
+      "get_sidequest_vote_counts"
+    );
+
+    if (countsError) {
+      console.error(
+        "Could not load vote counts:",
+        countsError
+      );
+    } else {
+      countsAvailable = true;
+
+      for (const row of
+        (countRows ?? []) as VoteCountRow[]) {
+        voteCounts[row.sidequest_id] = {
+          upvotes: Number(row.upvotes) || 0,
+          downvotes: Number(row.downvotes) || 0,
+        };
+      }
+    }
+  }
+
+  // STEP 3: Load current user's votes.
   const userVotes: Record<string, 1 | -1> = {};
 
   if (user && sidequests.length > 0) {
-    const { data: votes, error: votesError } = await supabase
+    const {
+      data: votes,
+      error: votesError,
+    } = await supabase
       .from("sidequest_votes")
       .select("sidequest_id, vote")
       .eq("user_id", user.id)
@@ -91,7 +238,10 @@ export default async function CommunityPage() {
       );
 
     if (votesError) {
-      console.error("Could not load user votes:", votesError);
+      console.error(
+        "Could not load user votes:",
+        votesError
+      );
     }
 
     for (const vote of votes ?? []) {
@@ -101,6 +251,69 @@ export default async function CommunityPage() {
     }
   }
 
+  // STEP 4: Filter Sidequests by keywords.
+  //
+  // Match titles, taglines, locations,
+  // and the complete saved itinerary text.
+  const normalizedQuery = query.toLowerCase();
+
+  const filteredSidequests = normalizedQuery
+    ? sidequests.filter((sidequest) => {
+        const searchableText = [
+          sidequest.title,
+          sidequest.generated_guide,
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return searchableText.includes(normalizedQuery);
+      })
+    : sidequests;
+
+  // STEP 5: Sort filtered results.
+  const sortedSidequests = [...filteredSidequests];
+
+  if (sort === "top" && countsAvailable) {
+    sortedSidequests.sort((a, b) => {
+      const aCounts = voteCounts[a.id] ?? {
+        upvotes: 0,
+        downvotes: 0,
+      };
+
+      const bCounts = voteCounts[b.id] ?? {
+        upvotes: 0,
+        downvotes: 0,
+      };
+
+      const aScore =
+        aCounts.upvotes - aCounts.downvotes;
+
+      const bScore =
+        bCounts.upvotes - bCounts.downvotes;
+
+      if (bScore !== aScore) {
+        return bScore - aScore;
+      }
+
+      // Newer Sidequests break ranking ties.
+      return (
+        new Date(b.created_at).getTime() -
+        new Date(a.created_at).getTime()
+      );
+    });
+  }
+
+  // Keep the search query when changing sorting.
+  const encodedQuery = encodeURIComponent(query);
+
+  const recentHref = query
+    ? `/community?q=${encodedQuery}`
+    : "/community";
+
+  const topHref = query
+    ? `/community?sort=top&q=${encodedQuery}`
+    : "/community?sort=top";
+
   return (
     <main
       className={`${headingFont.variable} ${bodyFont.variable} ${styles.page}`}
@@ -108,9 +321,18 @@ export default async function CommunityPage() {
       <div className={styles.shell}>
         {/* NAVIGATION */}
         <header className={styles.siteHeader}>
-          <nav className={styles.nav} aria-label="Main navigation">
-            <Link href="/community" className={styles.logo}>
-              <span className={styles.logoStar} aria-hidden="true">
+          <nav
+            className={styles.nav}
+            aria-label="Main navigation"
+          >
+            <Link
+              href="/community"
+              className={styles.logo}
+            >
+              <span
+                className={styles.logoStar}
+                aria-hidden="true"
+              >
                 ✳
               </span>
               NYC Sidequest
@@ -125,249 +347,492 @@ export default async function CommunityPage() {
                 EXPLORE
               </Link>
 
-              <Link href="/sidequest" className={styles.navLink}>
+              <Link
+                href="/sidequest"
+                className={styles.navLink}
+              >
                 CREATE
               </Link>
 
-              {user ? (
-                <Link href="/profile" className={styles.accountLink}>
-                  MY PROFILE
-                </Link>
-              ) : (
-                <Link href="/login" className={styles.accountLink}>
-                  SIGN IN ↗
-                </Link>
-              )}
+              <AccountMenu
+                isLoggedIn={Boolean(user)}
+              />
             </div>
           </nav>
         </header>
 
-        {/* HERO SECTION */}
-        <section className={styles.hero}>
-          <div className={styles.heroCopy}>
-            <p className={styles.eyebrow}>
-              ✳ SMALL PLANS. BIG CITY ENERGY.
-            </p>
-
-            <h1 className={styles.heroTitle}>
-              YOUR CITY.
-              <br />
-              YOUR NEXT
-              <br />
-              <span>ADVENTURE.</span>
-            </h1>
-
-            <p className={styles.heroDescription}>
-              Unexpected corners, good company, and new favorite
-              places. Explore student-made adventures around NYC
-              or create one of your own.
-            </p>
-
-            <Link href="/sidequest" className={styles.heroButton}>
-              CREATE A SIDEQUEST <span aria-hidden="true">↗</span>
-            </Link>
-          </div>
-
-          <div className={styles.heroArtwork} aria-hidden="true">
-            <span className={styles.heroFlower}>✳</span>
-            <div className={styles.heroCircle}>
-              <span>GO</span>
-              <span>EXPLORE</span>
-              <span>NYC!</span>
-            </div>
-            <span className={styles.heroSparkle}>✷</span>
-            <span className={styles.heroSmallText}>
-              YOUR NEXT FAVORITE PLACE IS OUT THERE.
-            </span>
-          </div>
-        </section>
-
-        {/* DECORATIVE STRIP */}
-        <div className={styles.ticker} aria-hidden="true">
-          <span>WANDER MORE</span>
-          <span>✳</span>
-          <span>DISCOVER MORE</span>
-          <span>✳</span>
-          <span>MAKE MEMORIES</span>
-          <span>✳</span>
-          <span>WANDER MORE</span>
-        </div>
-
-        {/* COMMUNITY SECTION */}
-        <section className={styles.communitySection}>
-          <div className={styles.sectionHeader}>
-            <div>
+        {/* COMMUNITY COLLECTION */}
+        <section
+          className={styles.communitySection}
+          aria-labelledby="community-heading"
+        >
+          {/* COMPACT TWO-ROW HEADER */}
+          <div className={styles.collectionHeader}>
+            {/* EYEBROW + SHARED COUNT */}
+            <div className={styles.collectionTopRow}>
               <p className={styles.sectionEyebrow}>
-                THE COMMUNITY COLLECTION
+                THE COMMUNITY COLLECTION ✳
               </p>
 
-              <h2 className={styles.sectionTitle}>
-                EXPLORE SIDEQUESTS<span>.</span>
-              </h2>
-
-              <p className={styles.sectionDescription}>
-                Real places. New perspectives. Adventures worth
-                sharing.
-              </p>
+              {!error && sidequests.length > 0 && (
+                <span className={styles.collectionCount}>
+                  {sidequests.length} SHARED
+                </span>
+              )}
             </div>
 
-            {!error && sidequests.length > 0 && (
-              <span className={styles.collectionCount}>
-                {sidequests.length} SHARED
-              </span>
-            )}
+            {/* TITLE + SEARCH + SORT */}
+            <div className={styles.titleToolsRow}>
+              <h1
+                id="community-heading"
+                className={styles.sectionTitle}
+              >
+                EXPLORE SIDEQUESTS<span>.</span>
+              </h1>
+
+              {!error && sidequests.length > 0 && (
+                <div className={styles.headerTools}>
+                  {/* KEYWORD SEARCH */}
+                  <SearchBar
+                    initialQuery={query}
+                    sort={sort}
+                  />
+
+                  {/* EXISTING SORT CONTROLS */}
+                  <div
+                    className={styles.headerSort}
+                    aria-label="Sort Sidequests"
+                  >
+                    <span className={styles.sortLabel}>
+                      SORT BY
+                    </span>
+
+                    <div className={styles.sortOptions}>
+                      <Link
+                        href={recentHref}
+                        className={`${styles.sortLink} ${
+                          sort === "recent"
+                            ? styles.sortActive
+                            : ""
+                        }`}
+                        aria-current={
+                          sort === "recent"
+                            ? "page"
+                            : undefined
+                        }
+                      >
+                        MOST RECENT
+                      </Link>
+
+                      {countsAvailable ? (
+                        <Link
+                          href={topHref}
+                          className={`${styles.sortLink} ${
+                            sort === "top"
+                              ? styles.sortActive
+                              : ""
+                          }`}
+                          aria-current={
+                            sort === "top"
+                              ? "page"
+                              : undefined
+                          }
+                        >
+                          TOP RATED
+                        </Link>
+                      ) : (
+                        <span
+                          className={styles.sortDisabled}
+                          title="Vote totals are unavailable"
+                        >
+                          TOP RATED
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* DATABASE ERROR */}
           {error && (
-            <div className={styles.messageCard} role="alert">
-              Could not load published SideQuests.
+            <div
+              className={styles.messageCard}
+              role="alert"
+            >
+              Could not load published Sidequests.
               Please try again later.
             </div>
           )}
 
-          {/* EMPTY STATE */}
+          {/* NO PUBLISHED SIDEQUESTS */}
           {!error && sidequests.length === 0 && (
             <div className={styles.messageCard}>
-              <h3>NO SIDEQUESTS YET!</h3>
+              <h2>NO SIDEQUESTS YET!</h2>
 
               <p>
-                The city is waiting. Be the first to share an
-                adventure.
+                Be the first to share an adventure.
               </p>
 
-              <Link href="/sidequest" className={styles.darkButton}>
+              <Link
+                href="/sidequest"
+                className={styles.darkButton}
+              >
                 CREATE THE FIRST SIDEQUEST ↗
               </Link>
             </div>
           )}
 
-          {/* SIDEQUEST CARDS */}
-          {!error && (
+          {/* VOTE TOTALS ERROR */}
+          {!error &&
+            sidequests.length > 0 &&
+            !countsAvailable && (
+              <p
+                className={styles.countsError}
+                role="status"
+              >
+                Vote totals are temporarily unavailable.
+              </p>
+            )}
+
+          {/* NO SEARCH RESULTS */}
+          {!error &&
+            sidequests.length > 0 &&
+            sortedSidequests.length === 0 && (
+              <div className={styles.messageCard}>
+                <h2>NO MATCHING SIDEQUESTS!</h2>
+
+                <p>
+                  Try a different keyword or
+                  neighborhood.
+                </p>
+
+                <Link
+                  href="/community"
+                  className={styles.darkButton}
+                >
+                  CLEAR SEARCH ↗
+                </Link>
+              </div>
+            )}
+
+          {/* MATCHING SIDEQUESTS */}
+          {!error && sortedSidequests.length > 0 && (
             <div className={styles.cards}>
-              {sidequests.map((sidequest, index) => {
-                const photo = sidequest.photo;
+              {sortedSidequests.map(
+                (sidequest, index) => {
+                  const photo = sidequest.photo;
 
-                const { description, estimate } = getGuidePreview(
-                  sidequest.generated_guide,
-                  sidequest.title
-                );
+                  const {
+                    description,
+                    estimate,
+                  } = getGuidePreview(
+                    sidequest.generated_guide,
+                    sidequest.title
+                  );
 
-                return (
-                  <article
-                    key={sidequest.id}
-                    className={styles.card}
-                  >
-                    {/* VERTICAL PHOTO ON THE LEFT */}
-                    <div className={styles.cardMedia}>
-                      {photo?.url ? (
-                        /* eslint-disable-next-line @next/next/no-img-element */
-                        <img
-                          src={photo.url}
-                          alt={`Photograph associated with ${photo.place}`}
-                          className={styles.cardImage}
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div className={styles.photoPlaceholder}>
-                          <span>✳</span>
-                          <strong>NYC SIDEQUEST</strong>
-                          <small>GO SOMEWHERE NEW</small>
-                        </div>
-                      )}
-                    </div>
+                  const itinerary = parseItinerary(
+                    sidequest.generated_guide
+                  );
 
-                    {/* CONTENT ON THE RIGHT */}
-                    <div className={styles.cardContent}>
-                      <div className={styles.cardTop}>
-                        <span className={styles.cardLabel}>
-                          COMMUNITY SIDEQUEST
-                        </span>
+                  const counts =
+                    voteCounts[sidequest.id] ?? {
+                      upvotes: 0,
+                      downvotes: 0,
+                    };
 
-                        <span className={styles.cardNumber}>
-                          NO. {String(index + 1).padStart(2, "0")}
-                        </span>
-                      </div>
-
-                      <div className={styles.cardMain}>
-                        <h3 className={styles.cardTitle}>
-                          {sidequest.title}
-                        </h3>
-
-                        <p className={styles.cardDescription}>
-                          {description}
-                        </p>
-
-                        {estimate && (
-                          <div className={styles.estimate}>
-                            <span aria-hidden="true">◷</span>
-                            {estimate}
+                  return (
+                    <article
+                      key={sidequest.id}
+                      className={styles.card}
+                    >
+                      {/* PHOTOGRAPH */}
+                      <div
+                        className={styles.cardMedia}
+                      >
+                        {photo?.url ? (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img
+                            src={photo.url}
+                            alt={`Photograph associated with ${photo.place}`}
+                            className={styles.cardImage}
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div
+                            className={
+                              styles.photoPlaceholder
+                            }
+                          >
+                            <span aria-hidden="true">
+                              ✳
+                            </span>
+                            <strong>
+                              NYC SIDEQUEST
+                            </strong>
+                            <small>
+                              GO SOMEWHERE NEW
+                            </small>
                           </div>
                         )}
                       </div>
 
-                      {/* FULL ITINERARY */}
-                      <details className={styles.details}>
-                        <summary className={styles.detailsSummary}>
-                          <span>VIEW FULL ITINERARY</span>
-                          <span aria-hidden="true">↘</span>
-                        </summary>
+                      {/* CARD CONTENT */}
+                      <div
+                        className={styles.cardContent}
+                      >
+                        <div className={styles.cardTop}>
+                          <span
+                            className={
+                              styles.cardLabel
+                            }
+                          >
+                            COMMUNITY SIDEQUEST
+                          </span>
 
-                        <div className={styles.fullGuide}>
-                          {sidequest.generated_guide}
+                          <span
+                            className={
+                              styles.cardNumber
+                            }
+                          >
+                            NO.{" "}
+                            {String(
+                              index + 1
+                            ).padStart(2, "0")}
+                          </span>
                         </div>
-                      </details>
 
-                      {/* KEEP EXISTING VOTING FUNCTIONALITY */}
-                      <div className={styles.votingArea}>
-                        <VoteButtons
-                          sidequestId={sidequest.id}
-                          isLoggedIn={Boolean(user)}
-                          initialVote={
-                            userVotes[sidequest.id] ?? null
+                        {/* TITLE AND ESTIMATE */}
+                        <div
+                          className={styles.cardMain}
+                        >
+                          <div
+                            className={
+                              styles.cardInfoRow
+                            }
+                          >
+                            <div
+                              className={
+                                styles.cardText
+                              }
+                            >
+                              <h2
+                                className={
+                                  styles.cardTitle
+                                }
+                              >
+                                {sidequest.title}
+                              </h2>
+
+                              <p
+                                className={
+                                  styles.cardDescription
+                                }
+                              >
+                                {description}
+                              </p>
+                            </div>
+
+                            {estimate && (
+                              <div
+                                className={
+                                  styles.estimate
+                                }
+                              >
+                                <span
+                                  aria-hidden="true"
+                                >
+                                  ◷
+                                </span>
+
+                                <span>
+                                  {estimate}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* ITINERARY AND VOTING */}
+                        <div
+                          className={
+                            styles.actionsArea
                           }
-                        />
-                      </div>
+                        >
+                          <details
+                            className={styles.details}
+                          >
+                            <summary
+                              className={
+                                styles.detailsSummary
+                              }
+                            >
+                              <span>
+                                VIEW FULL ITINERARY
+                              </span>
 
-                      {/* REQUIRED PHOTO ATTRIBUTION */}
-                      {photo && (
-                        <p className={styles.photoCredit}>
-                          Photo: {photo.credit}
-                          {" · "}
+                              <span
+                                className={
+                                  styles.detailsArrow
+                                }
+                                aria-hidden="true"
+                              >
+                                ↘
+                              </span>
+                            </summary>
 
-                          {photo.licenseUrl ? (
+                            {itinerary ? (
+                              <div
+                                className={
+                                  styles.itineraryStops
+                                }
+                              >
+                                {itinerary.stops.map(
+                                  (
+                                    stop,
+                                    stopIndex
+                                  ) => (
+                                    <div
+                                      key={`${sidequest.id}-${stopIndex}`}
+                                      className={
+                                        styles.itineraryStop
+                                      }
+                                    >
+                                      <div
+                                        className={
+                                          styles.stopNumber
+                                        }
+                                        aria-hidden="true"
+                                      >
+                                        {stop.number}
+                                      </div>
+
+                                      <div
+                                        className={
+                                          styles.stopContent
+                                        }
+                                      >
+                                        <h3
+                                          className={
+                                            styles.stopPlace
+                                          }
+                                        >
+                                          {stop.place}
+                                        </h3>
+
+                                        <p
+                                          className={
+                                            styles.stopDetails
+                                          }
+                                        >
+                                          {stop.details}
+                                        </p>
+
+                                        <p
+                                          className={
+                                            styles.stopActivity
+                                          }
+                                        >
+                                          {stop.activity}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  )
+                                )}
+                              </div>
+                            ) : (
+                              <div
+                                className={
+                                  styles.fullGuide
+                                }
+                              >
+                                {
+                                  sidequest.generated_guide
+                                }
+                              </div>
+                            )}
+                          </details>
+
+                          {/* VOTING AND COUNTS */}
+                          <div
+                            className={
+                              styles.votingArea
+                            }
+                          >
+                            <VoteButtons
+                              key={sidequest.id}
+                              sidequestId={
+                                sidequest.id
+                              }
+                              isLoggedIn={
+                                Boolean(user)
+                              }
+                              initialVote={
+                                userVotes[
+                                  sidequest.id
+                                ] ?? null
+                              }
+                              initialUpvotes={
+                                counts.upvotes
+                              }
+                              initialDownvotes={
+                                counts.downvotes
+                              }
+                              showCounts={
+                                countsAvailable
+                              }
+                            />
+                          </div>
+                        </div>
+
+                        {/* PHOTO ATTRIBUTION */}
+                        {photo && (
+                          <p
+                            className={
+                              styles.photoCredit
+                            }
+                          >
+                            Photo: {photo.credit}
+                            {" · "}
+
+                            {photo.licenseUrl ? (
+                              <a
+                                href={
+                                  photo.licenseUrl
+                                }
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {photo.license}
+                              </a>
+                            ) : (
+                              photo.license
+                            )}
+
+                            {" · "}
+
                             <a
-                              href={photo.licenseUrl}
+                              href={photo.sourceUrl}
                               target="_blank"
                               rel="noopener noreferrer"
                             >
-                              {photo.license}
+                              Source
                             </a>
-                          ) : (
-                            photo.license
-                          )}
 
-                          {" · "}
-
-                          <a
-                            href={photo.sourceUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            Source
-                          </a>
-
-                          {" · Cropped for display"}
-                        </p>
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
+                            {" · Cropped for display"}
+                          </p>
+                        )}
+                      </div>
+                    </article>
+                  );
+                }
+              )}
             </div>
           )}
         </section>
 
+        {/* FOOTER */}
         <footer className={styles.footer}>
           <span>✳ NYC SIDEQUEST</span>
           <span>MADE FOR THE CURIOUS.</span>

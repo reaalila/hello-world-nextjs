@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 
+type Coordinates = {
+  lat: number;
+  lon: number;
+};
+
 type WikipediaPage = {
   title: string;
   missing?: boolean;
@@ -9,6 +14,8 @@ type WikipediaPage = {
     width: number;
     height: number;
   };
+  extract?: string;
+  coordinates?: Coordinates[];
 };
 
 type WikipediaResponse = {
@@ -20,7 +27,10 @@ type WikipediaResponse = {
 type CommonsFile = {
   imageinfo?: {
     mime?: string;
-    extmetadata?: Record<string, { value: string }>;
+    extmetadata?: Record<
+      string,
+      { value: string }
+    >;
   }[];
 };
 
@@ -39,7 +49,19 @@ type PlacePhoto = {
   licenseUrl: string | null;
 };
 
-// Remove HTML tags and decode common HTML entities.
+const WIKIPEDIA_API =
+  "https://en.wikipedia.org/w/api.php";
+
+// Approximate NYC bounds.
+// Used to reject obviously unrelated locations.
+const NYC_BOUNDS = {
+  south: 40.47,
+  north: 40.93,
+  west: -74.27,
+  east: -73.68,
+};
+
+// Remove HTML tags and common entities.
 function cleanText(value: string): string {
   return value
     .replace(/<[^>]*>/g, "")
@@ -52,7 +74,7 @@ function cleanText(value: string): string {
     .trim();
 }
 
-// Normalize location names for matching.
+// Normalize place names for matching.
 function normalizeName(value: string): string {
   return value
     .normalize("NFD")
@@ -64,14 +86,15 @@ function normalizeName(value: string): string {
     .trim();
 }
 
-// Return a safe empty photo result.
+// Return an empty photo result.
+// The client already displays its placeholder.
 function noPhoto() {
   return NextResponse.json({
     photo: null,
   });
 }
 
-// Only accept HTTPS URLs from trusted Wikimedia hosts.
+// Allow images from trusted Wikimedia hosts only.
 function isWikimediaImage(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -88,16 +111,21 @@ function isWikimediaImage(url: string): boolean {
   }
 }
 
-// Only allow reusable image licenses.
-function isReusableLicense(license: string): boolean {
-  return /^(CC0(?:\s|$)|CC[- ]BY(?:[- ]SA)?(?:[- ]\d+(?:\.\d+)?)?(?:\s|$)|Public domain|PD(?:[- ]|$))/i.test(
+// Accept only supported reusable licenses.
+function isReusableLicense(
+  license: string
+): boolean {
+  return /^(CC0(?:\s|$)|CC[- ]*BY(?:[- ]*SA)?(?:[- ]\d+(?:\.\d+)?)?(?:\s|$)|Public domain|PD(?:[- ]|\s|$))/i.test(
     license
   );
 }
 
-// NYC neighborhood titles sometimes differ
-// from their actual Wikipedia article names.
-const NEIGHBORHOOD_ARTICLES: Record<string, string[]> = {
+// Wikipedia article names sometimes differ
+// from the neighborhood names used by Gemini.
+const NEIGHBORHOOD_ARTICLES: Record<
+  string,
+  string[]
+> = {
   "east village": [
     "East Village, Manhattan",
   ],
@@ -116,7 +144,7 @@ const NEIGHBORHOOD_ARTICLES: Record<string, string[]> = {
     "Lower East Side, Manhattan",
   ],
 
-  "chinatown": [
+  chinatown: [
     "Chinatown, Manhattan",
   ],
 
@@ -124,11 +152,11 @@ const NEIGHBORHOOD_ARTICLES: Record<string, string[]> = {
     "Little Italy, Manhattan",
   ],
 
-  "soho": [
+  soho: [
     "SoHo, Manhattan",
   ],
 
-  "tribeca": [
+  tribeca: [
     "Tribeca",
   ],
 
@@ -140,7 +168,7 @@ const NEIGHBORHOOD_ARTICLES: Record<string, string[]> = {
     "Upper East Side",
   ],
 
-  "harlem": [
+  harlem: [
     "Harlem",
   ],
 
@@ -148,7 +176,7 @@ const NEIGHBORHOOD_ARTICLES: Record<string, string[]> = {
     "Morningside Heights, Manhattan",
   ],
 
-  "chelsea": [
+  chelsea: [
     "Chelsea, Manhattan",
   ],
 
@@ -160,15 +188,15 @@ const NEIGHBORHOOD_ARTICLES: Record<string, string[]> = {
     "Financial District, Manhattan",
   ],
 
-  "dumbo": [
+  dumbo: [
     "Dumbo, Brooklyn",
   ],
 
-  "williamsburg": [
+  williamsburg: [
     "Williamsburg, Brooklyn",
   ],
 
-  "bushwick": [
+  bushwick: [
     "Bushwick, Brooklyn",
   ],
 
@@ -180,15 +208,15 @@ const NEIGHBORHOOD_ARTICLES: Record<string, string[]> = {
     "Brooklyn Heights",
   ],
 
-  "greenpoint": [
+  greenpoint: [
     "Greenpoint, Brooklyn",
   ],
 
-  "astoria": [
+  astoria: [
     "Astoria, Queens",
   ],
 
-  "flushing": [
+  flushing: [
     "Flushing, Queens",
   ],
 
@@ -199,28 +227,84 @@ const NEIGHBORHOOD_ARTICLES: Record<string, string[]> = {
   "forest hills": [
     "Forest Hills, Queens",
   ],
+
+  "roosevelt island": [
+    "Roosevelt Island",
+  ],
+
+  "fort tryon park": [
+    "Fort Tryon Park",
+  ],
 };
 
-// Generate a small set of article titles.
-// Prioritize the exact destination.
-function getArticleCandidates(place: string): string[] {
+// Build a short list of article titles.
+// Try the exact destination first.
+function getArticleCandidates(
+  place: string
+): string[] {
   const normalized = normalizeName(place);
 
   const candidates = [
     place,
-    ...(NEIGHBORHOOD_ARTICLES[normalized] ?? []),
+    ...(NEIGHBORHOOD_ARTICLES[
+      normalized
+    ] ?? []),
   ];
 
   return [
     ...new Set(
       candidates
-        .map((candidate) => candidate.trim())
+        .map((candidate) =>
+          candidate.trim()
+        )
         .filter(Boolean)
     ),
   ];
 }
 
-// Retrieve a Wikipedia article with a free thumbnail.
+// Check whether coordinates fall within
+// our approximate NYC geographic bounds.
+function isWithinNYC(
+  coordinates: Coordinates
+): boolean {
+  return (
+    coordinates.lat >= NYC_BOUNDS.south &&
+    coordinates.lat <= NYC_BOUNDS.north &&
+    coordinates.lon >= NYC_BOUNDS.west &&
+    coordinates.lon <= NYC_BOUNDS.east
+  );
+}
+
+// Require geographic evidence that the
+// article describes a New York City location.
+//
+// If Wikipedia provides coordinates, those
+// take priority. This rejects places such
+// as Pebble Beach, California.
+//
+// If coordinates are missing, require explicit
+// NYC context in the article introduction.
+function isRelevantNYCArticle(
+  page: WikipediaPage
+): boolean {
+  if (
+    page.coordinates &&
+    page.coordinates.length > 0
+  ) {
+    return page.coordinates.some(isWithinNYC);
+  }
+
+  const articleContext = [
+    page.title,
+    page.extract ?? "",
+  ].join(" ");
+
+  return /\b(new york city|new york|manhattan|brooklyn|queens|the bronx|bronx|staten island)\b/i.test(
+    articleContext
+  );
+}
+
+// Find a freely licensed Wikipedia thumbnail.
 async function getWikipediaPage(
   place: string,
   headers: Record<string, string>
@@ -231,14 +315,18 @@ async function getWikipediaPage(
     formatversion: "2",
     titles: place,
     redirects: "1",
-    prop: "pageimages",
+    prop: "pageimages|extracts|coordinates",
     piprop: "thumbnail|name",
     pithumbsize: "1200",
     pilicense: "free",
+    exintro: "1",
+    explaintext: "1",
+    exsentences: "3",
+    colimit: "1",
   });
 
   const response = await fetch(
-    `https://en.wikipedia.org/w/api.php?${params.toString()}`,
+    `${WIKIPEDIA_API}?${params.toString()}`,
     {
       headers,
       next: {
@@ -265,9 +353,21 @@ async function getWikipediaPage(
     return null;
   }
 
-  const { source, width, height } = page.thumbnail;
+  // Reject unrelated geographic results.
+  if (!isRelevantNYCArticle(page)) {
+    console.warn(
+      `Rejected non-NYC photograph: "${place}" resolved to "${page.title}".`
+    );
 
-  // Reject invalid or very small images.
+    return null;
+  }
+
+  const {
+    source,
+    width,
+    height,
+  } = page.thumbnail;
+
   if (
     !isWikimediaImage(source) ||
     width < 450 ||
@@ -279,16 +379,21 @@ async function getWikipediaPage(
   return page;
 }
 
-// Retrieve the licensing metadata for an image.
+// Retrieve image copyright and attribution.
 async function getPhotoMetadata(
   page: WikipediaPage,
   headers: Record<string, string>
 ): Promise<PlacePhoto | null> {
-  if (!page.pageimage || !page.thumbnail) {
+  if (
+    !page.pageimage ||
+    !page.thumbnail
+  ) {
     return null;
   }
 
-  const fileTitle = page.pageimage.startsWith("File:")
+  const fileTitle = page.pageimage.startsWith(
+    "File:"
+  )
     ? page.pageimage
     : `File:${page.pageimage}`;
 
@@ -302,7 +407,7 @@ async function getPhotoMetadata(
   });
 
   const response = await fetch(
-    `https://en.wikipedia.org/w/api.php?${params.toString()}`,
+    `${WIKIPEDIA_API}?${params.toString()}`,
     {
       headers,
       next: {
@@ -319,20 +424,27 @@ async function getPhotoMetadata(
     (await response.json()) as CommonsResponse;
 
   const file = data.query?.pages?.[0];
-  const imageInfo = file?.imageinfo?.[0];
 
-  // Prefer photographic JPEG files.
+  const imageInfo =
+    file?.imageinfo?.[0];
+
+  // Preserve the existing preference
+  // for photographic JPEG images.
   if (imageInfo?.mime !== "image/jpeg") {
     return null;
   }
 
-  const metadata = imageInfo.extmetadata ?? {};
+  const metadata =
+    imageInfo.extmetadata ?? {};
 
   const license = cleanText(
     metadata.LicenseShortName?.value ?? ""
   );
 
-  if (!license || !isReusableLicense(license)) {
+  if (
+    !license ||
+    !isReusableLicense(license)
+  ) {
     return null;
   }
 
@@ -344,7 +456,9 @@ async function getPhotoMetadata(
 
   if (rawLicenseUrl) {
     try {
-      const parsed = new URL(rawLicenseUrl);
+      const parsed = new URL(
+        rawLicenseUrl
+      );
 
       if (
         parsed.protocol === "https:" &&
@@ -365,7 +479,8 @@ async function getPhotoMetadata(
   const credit =
     cleanText(
       metadata.Artist?.value ?? ""
-    ).slice(0, 160) || "Unknown photographer";
+    ).slice(0, 160) ||
+    "Unknown photographer";
 
   const sourceUrl =
     "https://commons.wikimedia.org/wiki/" +
@@ -384,13 +499,22 @@ async function getPhotoMetadata(
 }
 
 // Main photo lookup endpoint.
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
+export async function GET(
+  request: Request
+) {
+  const { searchParams } = new URL(
+    request.url
+  );
 
-  const place = searchParams.get("place")?.trim();
+  const place = searchParams
+    .get("place")
+    ?.trim();
 
   // STEP 1: Validate the requested location.
-  if (!place || place.length > 120) {
+  if (
+    !place ||
+    place.length > 120
+  ) {
     return NextResponse.json(
       {
         error: "Invalid place.",
@@ -407,11 +531,12 @@ export async function GET(request: Request) {
     Accept: "application/json",
   };
 
-  // STEP 2: Build candidate article titles.
-  const candidates = getArticleCandidates(place);
+  // STEP 2: Build article candidates.
+  const candidates = getArticleCandidates(
+    place
+  );
 
-  // STEP 3: Search each candidate until
-  // we find a suitable reusable photograph.
+  // STEP 3: Search candidates in order.
   for (const candidate of candidates) {
     try {
       const page = await getWikipediaPage(
@@ -423,7 +548,7 @@ export async function GET(request: Request) {
         continue;
       }
 
-      // STEP 4: Validate licensing and attribution.
+      // STEP 4: Check license and attribution.
       const photo = await getPhotoMetadata(
         page,
         headers
@@ -433,7 +558,7 @@ export async function GET(request: Request) {
         continue;
       }
 
-      // STEP 5: Return the first suitable photograph.
+      // STEP 5: Return the verified article photo.
       return NextResponse.json({
         photo,
       });
@@ -442,13 +567,10 @@ export async function GET(request: Request) {
         `Photo lookup failed for "${candidate}":`,
         error
       );
-
-      // Try another article candidate.
-      continue;
     }
   }
 
-  // STEP 6: Nothing suitable was found.
-  // Let the frontend display its branded placeholder.
+  // STEP 6: No confidently relevant photo.
+  // Let the client show the existing placeholder.
   return noPhoto();
 }
