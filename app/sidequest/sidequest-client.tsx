@@ -69,13 +69,18 @@ export default function SideQuestClient() {
 
   const [photoLoading, setPhotoLoading] = useState(false);
 
+  const [photoSaveError, setPhotoSaveError] = useState("");
+
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState(false);
   const [publishError, setPublishError] = useState("");
 
   const requestId = useRef(0);
 
-  // Find a Wikimedia photograph for an itinerary location.
+  // --------------------------------------------
+  // FIND AND SAVE A SIDEQUEST PHOTO
+  // --------------------------------------------
+
   async function findSideQuestPhoto(
     sidequest: SideQuest,
     currentRequestId: number
@@ -94,14 +99,17 @@ export default function SideQuestClient() {
     }
 
     setPhotoLoading(true);
+    setPhotoSaveError("");
 
     try {
       for (const place of uniquePlaces) {
+        // Stop if the user generated another Sidequest.
         if (requestId.current !== currentRequestId) {
           return;
         }
 
         try {
+          // STEP 1: Find a real photograph.
           const response = await fetch(
             "/api/sidequest/photo?place=" +
               encodeURIComponent(place)
@@ -114,10 +122,88 @@ export default function SideQuestClient() {
           const data = await response.json();
 
           if (data.photo) {
-            if (requestId.current === currentRequestId) {
-              setPhoto(data.photo as PlacePhoto);
+            if (requestId.current !== currentRequestId) {
+              return;
             }
 
+            const selectedPhoto =
+              data.photo as PlacePhoto;
+
+            // STEP 2: Display the photograph immediately.
+            setPhoto(selectedPhoto);
+
+            // STEP 3: Save the photograph to Supabase,
+            // even when the Sidequest is unpublished.
+            try {
+              const saveResponse = await fetch(
+                "/api/sidequest/photo/save",
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    sidequestId: sidequest.id,
+                    photo: selectedPhoto,
+                  }),
+                }
+              );
+
+              if (!saveResponse.ok) {
+                const saveError =
+                  await saveResponse.json().catch(() => null);
+
+                console.error(
+                  "Sidequest photo was displayed but not saved:",
+                  saveError?.error ||
+                    `HTTP ${saveResponse.status}`
+                );
+
+                if (
+                  requestId.current === currentRequestId
+                ) {
+                  setPhotoSaveError(
+                    "The photograph is visible, but it could not be saved yet."
+                  );
+                }
+              } else {
+                const saveData = await saveResponse.json();
+
+                if (saveData.success !== true) {
+                  console.error(
+                    "Photo save was not confirmed:",
+                    saveData
+                  );
+
+                  if (
+                    requestId.current === currentRequestId
+                  ) {
+                    setPhotoSaveError(
+                      "The photograph is visible, but saving was not confirmed."
+                    );
+                  }
+                } else if (
+                  requestId.current === currentRequestId
+                ) {
+                  setPhotoSaveError("");
+                }
+              }
+            } catch (saveError) {
+              console.error(
+                "Unable to persist Sidequest photo:",
+                saveError
+              );
+
+              if (
+                requestId.current === currentRequestId
+              ) {
+                setPhotoSaveError(
+                  "The photograph is visible, but it could not be saved yet."
+                );
+              }
+            }
+
+            // We found a photo, so stop trying other places.
             return;
           }
         } catch (photoError) {
@@ -134,7 +220,10 @@ export default function SideQuestClient() {
     }
   }
 
-  // Generate an AI-powered SideQuest.
+  // --------------------------------------------
+  // GENERATE AN AI-POWERED SIDEQUEST
+  // --------------------------------------------
+
   async function generateSideQuest() {
     if (loading || publishing) {
       return;
@@ -143,7 +232,9 @@ export default function SideQuestClient() {
     const trimmedRequest = request.trim();
 
     if (trimmedRequest.length < 10) {
-      setError("Please describe your outing in more detail.");
+      setError(
+        "Please describe your outing in more detail."
+      );
       return;
     }
 
@@ -154,6 +245,7 @@ export default function SideQuestClient() {
     setResult(null);
     setPhoto(null);
     setPhotoLoading(false);
+    setPhotoSaveError("");
 
     setPublished(false);
     setPublishing(false);
@@ -187,8 +279,10 @@ export default function SideQuestClient() {
         return;
       }
 
+      // Display the itinerary immediately.
       setResult(sidequest);
 
+      // Find and save its photograph separately.
       void findSideQuestPhoto(
         sidequest,
         currentRequestId
@@ -208,7 +302,10 @@ export default function SideQuestClient() {
     }
   }
 
-  // Publish a generated SideQuest.
+  // --------------------------------------------
+  // PUBLISH A GENERATED SIDEQUEST
+  // --------------------------------------------
+
   async function publishSideQuest() {
     if (
       !result ||
@@ -255,6 +352,7 @@ export default function SideQuestClient() {
       }
 
       setPublished(true);
+      setPhotoSaveError("");
     } catch (err) {
       setPublishError(
         err instanceof Error
@@ -266,11 +364,16 @@ export default function SideQuestClient() {
     }
   }
 
+  // --------------------------------------------
+  // PAGE
+  // --------------------------------------------
+
   return (
     <main
       className={`${headingFont.variable} ${bodyFont.variable} ${styles.page}`}
     >
       <div className={styles.shell}>
+
         {/* NAVIGATION */}
         <header className={styles.siteHeader}>
           <nav
@@ -306,7 +409,7 @@ export default function SideQuestClient() {
                 CREATE
               </Link>
 
-              {/* NEW PROFILE ICON DROPDOWN */}
+              {/* PROFILE ICON DROPDOWN */}
               <AccountMenu isLoggedIn={true} />
             </div>
           </nav>
@@ -436,11 +539,14 @@ export default function SideQuestClient() {
               </div>
 
               <span className={styles.resultBadge}>
-                {published ? "✳ PUBLISHED" : "✳ YOUR DRAFT"}
+                {published
+                  ? "✳ PUBLISHED"
+                  : "✳ YOUR DRAFT"}
               </span>
             </div>
 
             <div className={styles.resultCard}>
+
               {/* REAL LOCATION PHOTO */}
               <div className={styles.visualColumn}>
                 {photo ? (
@@ -464,6 +570,7 @@ export default function SideQuestClient() {
                   </div>
                 )}
 
+                {/* PHOTO ATTRIBUTION */}
                 {photo && (
                   <p className={styles.photoCredit}>
                     Photo: {photo.credit}
@@ -492,6 +599,16 @@ export default function SideQuestClient() {
                     </a>
 
                     {" · Cropped for display"}
+                  </p>
+                )}
+
+                {/* PHOTO SAVE ERROR */}
+                {photoSaveError && !published && (
+                  <p
+                    role="alert"
+                    className={styles.errorMessage}
+                  >
+                    {photoSaveError}
                   </p>
                 )}
               </div>
